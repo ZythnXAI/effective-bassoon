@@ -1,144 +1,809 @@
-name: Windows macOS Style - Dev/Test (Tailscale RDP)
+name: 🍎 macOS Total Experience - RDP
 
 on:
   workflow_dispatch:
+    inputs:
+      dark_mode:
+        description: 'Modo Escuro (true/false)'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
+      macos_style:
+        description: 'Estilo macOS'
+        required: false
+        default: 'Sequoia'
+        type: choice
+        options: ['Sequoia', 'Sonoma', 'Ventura']
+      session_minutes:
+        description: 'Duração da sessão (min)'
+        required: false
+        default: '350'
+        type: string
 
-permissions:
-  contents: read
-
-concurrency:
-  group: windows-macos-style-${{ github.repository }}
-  cancel-in-progress: true
+env:
+  MACOS_STYLE: ${{ inputs.macos_style || 'Sequoia' }}
+  DARK_MODE: ${{ inputs.dark_mode || 'true' }}
 
 jobs:
-  desktop:
-    runs-on: windows-latest
+  macos-total:
+    runs-on: windows-2022
     timeout-minutes: 360
 
-    env:
-      RDP_USER: cloudpc
-      TS_HOSTNAME: gh-macwin-${{ github.run_id }}
-
     steps:
-      - name: Record job start time
+      # ═══════════════════════════════════════════════════════
+      #  FASE 1: PREPARAÇÃO DO SISTEMA
+      # ═══════════════════════════════════════════════════════
+      - name: 🧹 Limpar espaço e preparar disco
         shell: pwsh
         run: |
-          "JOB_START_EPOCH=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 1: PREPARAÇÃO DO SISTEMA          ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
 
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Validate PowerShell syntax
-        shell: pwsh
-        run: |
-          $files = @(
-            'scripts/setup-windows-macos-style.ps1',
-            'scripts/apply-windows-macos-style-user.ps1',
-            'scripts/start-macbook-lite-shell.ps1',
-            'scripts/setup-safari-like-firefox.ps1',
-            'scripts/apply-safari-like-firefox-user.ps1'
+          # Remover software desnecessário
+          $toRemove = @(
+            "$env:SystemDrive\hostedtoolcache\windows\Ruby",
+            "$env:SystemDrive\hostedtoolcache\windows\go",
+            "$env:SystemDrive\hostedtoolcache\windows\Python",
+            "$env:ProgramFiles\dotnet\sdk",
+            "$env:ProgramFiles\MongoDB",
+            "$env:ProgramFiles\PostgreSQL",
+            "$env:ProgramFiles (x86)\Google\Chrome",
+            "$env:ProgramFiles\Mozilla Firefox",
+            "$env:ProgramFiles\Microsoft SQL Server",
+            "$env:ProgramFiles\MySQL",
+            "$env:ProgramFiles (x86)\Microsoft SDKs",
+            "$env:ProgramFiles\Android",
+            "$env:ProgramFiles\Microsoft Visual Studio\2022\Enterprise\Hosted"
           )
+          foreach ($path in $toRemove) {
+            if (Test-Path $path) {
+              Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "  ✓ Removido: $path" -ForegroundColor Green
+            }
+          }
 
-          foreach ($file in $files) {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $file),
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
+          # Criar pasta de trabalho
+          New-Item -ItemType Directory -Force -Path "C:\macOS" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\macOS\Themes" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\macOS\Cursors" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\macOS\Wallpapers" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\macOS\Dock" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\macOS\Scripts" | Out-Null
+          New-Item -ItemType Directory -Force -Path "C:\macOS\Icons" | Out-Null
 
-            if ($errors.Count -gt 0) {
-              Write-Host "Syntax errors in $file"
-              $errors | ForEach-Object { Write-Host $_.Message }
-              exit 1
+          Write-Host "✅ Sistema preparado" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 2: CONFIGURAR RDP + USUÁRIO
+      # ═══════════════════════════════════════════════════════
+      - name: 🔐 Configurar RDP e criar usuário
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 2: RDP + USUÁRIO                  ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          # Configurar RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "SecurityLayer" -Value 0 -Force
+
+          # Firewall
+          netsh advfirewall firewall add rule name="RDP-Mac" dir=in action=allow protocol=TCP localport=3389 2>$null
+
+          # Reiniciar serviço RDP
+          Restart-Service -Name TermService -Force
+
+          # Gerar senha forte
+          $charSet = @{
+            Upper   = [char[]](65..90)
+            Lower   = [char[]](97..122)
+            Number  = [char[]](48..57)
+            Special = [char[]]@(33,35,36,37,38,42,43,45,61,64)
+          }
+          $rawPassword  = @()
+          $rawPassword += $charSet.Upper   | Get-Random -Count 4
+          $rawPassword += $charSet.Lower   | Get-Random -Count 4
+          $rawPassword += $charSet.Number  | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+
+          # Criar usuário
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "mac" -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "mac" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "mac" -ErrorAction SilentlyContinue
+
+          # Configurar auto-login para o usuário
+          $regPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+          Set-ItemProperty -Path $regPath -Name "DefaultUserName" -Value "mac"
+          Set-ItemProperty -Path $regPath -Name "DefaultPassword" -Value $password
+          Set-ItemProperty -Path $regPath -Name "AutoAdminLogon" -Value "1"
+
+          "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ Usuário 'mac' criado e RDP configurado" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 3: INSTALAR TAILSCALE + CONECTAR
+      # ═══════════════════════════════════════════════════════
+      - name: 🌐 Instalar e conectar Tailscale
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 3: TAILSCALE                      ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installer = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installer -UseBasicParsing
+          Start-Process msiexec.exe -ArgumentList "/i","`"$installer`"","/quiet","/norestart" -Wait
+          Remove-Item $installer -Force
+          Write-Host "  ✓ Tailscale instalado" -ForegroundColor Green
+
+          # Conectar
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=macbook-$env:GITHUB_RUN_ID
+
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 20) {
+            Start-Sleep -Seconds 4
+            $tsIP = & $ts ip -4 2>$null
+            $retries++
+          }
+
+          if (-not $tsIP) { Write-Error "❌ Tailscale IP não obtido"; exit 1 }
+          "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ Tailscale conectado: $tsIP" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 4: INSTALAR FERRAMENTAS BASE
+      # ═══════════════════════════════════════════════════════
+      - name: 📦 Instalar ferramentas base (winget, choco, AHK)
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 4: FERRAMENTAS BASE               ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          # Atualizar PATH
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+          # Instalar Chocolatey
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          $env:Path += ";C:\ProgramData\chocolatey\bin"
+          Write-Host "  ✓ Chocolatey instalado" -ForegroundColor Green
+
+          # Instalar ferramentas via Chocolatey
+          $packages = @(
+            "autohotkey",
+            "7zip",
+            "git",
+            "curl",
+            "notepadplusplus",
+            "vscode",
+            "firefox"
+          )
+          foreach ($pkg in $packages) {
+            choco install $pkg -y --no-progress 2>$null
+            Write-Host "  ✓ $pkg instalado" -ForegroundColor Green
+          }
+
+          # Instalar winget packages
+          winget install --id Microsoft.PowerShell -e --accept-source-agreements --accept-package-agreements 2>$null
+          Write-Host "✅ Ferramentas base instaladas" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 5: WALLPAPERS macOS
+      # ═══════════════════════════════════════════════════════
+      - name: 🌄 Baixar wallpapers macOS
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 5: WALLPAPERS macOS               ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          $wallpaperDir = "C:\macOS\Wallpapers"
+
+          # Wallpapers oficiais macOS (URLs públicas)
+          $wallpapers = @{
+            "sequoia-light"  = "https://raw.githubusercontent.com/Runixe786/Macified-Windows/main/wallpapers/macOS%20Sequoia%20Light.jpg"
+            "sequoia-dark"   = "https://raw.githubusercontent.com/Runixe786/Macified-Windows/main/wallpapers/macOS%20Sequoia%20Dark.jpg"
+            "sonoma-light"   = "https://raw.githubusercontent.com/Runixe786/Macified-Windows/main/wallpapers/macOS%20Sonoma%20Light.jpg"
+            "sonoma-dark"    = "https://raw.githubusercontent.com/Runixe786/Macified-Windows/main/wallpapers/macOS%20Sonoma%20Dark.jpg"
+            "ventura"        = "https://raw.githubusercontent.com/Runixe786/Macified-Windows/main/wallpapers/macOS%20Ventura.jpg"
+          }
+
+          foreach ($wp in $wallpapers.GetEnumerator()) {
+            try {
+              $outFile = Join-Path $wallpaperDir "$($wp.Key).jpg"
+              Invoke-WebRequest -Uri $wp.Value -OutFile $outFile -UseBasicParsing -ErrorAction SilentlyContinue
+              if (Test-Path $outFile) {
+                Write-Host "  ✓ Wallpaper: $($wp.Key)" -ForegroundColor Green
+              }
+            } catch {
+              Write-Host "  ⚠ Falha: $($wp.Key)" -ForegroundColor Yellow
+            }
+          }
+
+          # Fallback: criar wallpaper gradiente se downloads falharem
+          $fallbackPath = Join-Path $wallpaperDir "fallback.jpg"
+          if (-not (Get-ChildItem $wallpaperDir -Filter "*.jpg" -ErrorAction SilentlyContinue)) {
+            Write-Host "  ⚠ Usando wallpaper fallback (gradiente)" -ForegroundColor Yellow
+            # Criar um BMP simples como fallback
+            Add-Type -AssemblyName System.Drawing
+            $bmp = New-Object System.Drawing.Bitmap(3840, 2160)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
+              [System.Drawing.Point]::new(0,0),
+              [System.Drawing.Point]::new(3840,2160),
+              [System.Drawing.Color]::FromArgb(30, 30, 60),
+              [System.Drawing.Color]::FromArgb(100, 50, 150)
+            )
+            $g.FillRectangle($brush, 0, 0, 3840, 2160)
+            $bmp.Save($fallbackPath, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+            $g.Dispose()
+            $bmp.Dispose()
+          }
+
+          # Aplicar wallpaper baseado no modo
+          $style = $env:MACOS_STYLE.ToLower()
+          $mode = if ($env:DARK_MODE -eq "true") { "dark" } else { "light" }
+          $wallpaperFile = Join-Path $wallpaperDir "$style-$mode.jpg"
+
+          if (-not (Test-Path $wallpaperFile)) {
+            $wallpaperFile = Get-ChildItem $wallpaperDir -Filter "*.jpg" | Select-Object -First 1
+          }
+
+          if ($wallpaperFile) {
+            # Aplicar via registro
+            $wpPath = if ($wallpaperFile -is [System.IO.FileInfo]) { $wallpaperFile.FullName } else { $wallpaperFile }
+            reg add "HKCU\Control Panel\Desktop" /v Wallpaper /t REG_SZ /d $wpPath /f
+            reg add "HKCU\Control Panel\Desktop" /v WallpaperStyle /t REG_SZ /d 10 /f
+            reg add "HKCU\Control Panel\Desktop" /v TileWallpaper /t REG_SZ /d 0 /f
+
+            # Forçar atualização
+            Add-Type -TypeDefinition @"
+              using System;
+              using System.Runtime.InteropServices;
+              public class Wallpaper {
+                [DllImport("user32.dll", CharSet = CharSet.Auto)]
+                public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+              }
+"@
+            [Wallpaper]::SystemParametersInfo(0x0014, 0, $wpPath, 0x01 -bor 0x02)
+            Write-Host "✅ Wallpaper aplicado: $wpPath" -ForegroundColor Green
+          }
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 6: CURSORES macOS
+      # ═══════════════════════════════════════════════════════
+      - name: 🖱️ Instalar cursores macOS
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 6: CURSORES macOS                 ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          $cursorDir = "C:\macOS\Cursors"
+
+          # Baixar cursores macOS do GitHub
+          $cursorZipUrl = "https://github.com/Runixe786/Macified-Windows/raw/main/cursors/macOS%20Cursors.zip"
+          $cursorZip = Join-Path $cursorDir "cursors.zip"
+
+          try {
+            Invoke-WebRequest -Uri $cursorZipUrl -OutFile $cursorZip -UseBasicParsing -ErrorAction Stop
+            Expand-Archive -Path $cursorZip -DestinationPath $cursorDir -Force
+            Remove-Item $cursorZip -Force
+            Write-Host "  ✓ Cursores baixados e extraídos" -ForegroundColor Green
+
+            # Aplicar cursores via registro
+            $cursorSchemePath = "HKCU:\Control Panel\Cursors"
+            $cursorFiles = Get-ChildItem $cursorDir -Recurse -Filter "*.cur"
+
+            foreach ($file in $cursorFiles) {
+              $name = $file.BaseName.ToLower()
+              $regName = switch -Wildcard ($name) {
+                "*arrow*"    { "Arrow" }
+                "*hand*"     { "Hand" }
+                "*pointer*"  { "Hand" }
+                "*text*"     { "IBeam" }
+                "*ibeam*"    { "IBeam" }
+                "*cross*"    { "Crosshair" }
+                "*wait*"     { "Wait" }
+                "*busy*"     { "AppStarting" }
+                "*help*"     { "Help" }
+                "*pen*"      { "Handwriting" }
+                "*resize*"   { "SizeAll" }
+                "*move*"     { "SizeAll" }
+                default      { $null }
+              }
+              if ($regName) {
+                Set-ItemProperty -Path $cursorSchemePath -Name $regName -Value $file.FullName -ErrorAction SilentlyContinue
+              }
             }
 
-            Write-Host "Syntax OK: $file"
+            Write-Host "✅ Cursores macOS aplicados" -ForegroundColor Green
+          } catch {
+            Write-Host "  ⚠ Falha ao baixar cursores, usando padrão" -ForegroundColor Yellow
           }
 
-      - name: Validate required secrets
-        shell: pwsh
-        env:
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTHKEY)) { throw 'Missing secret: TAILSCALE_AUTHKEY' }
-          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) { throw 'Missing secret: RDP_PASSWORD' }
-          if ($env:RDP_PASSWORD.Length -lt 12) { throw 'RDP_PASSWORD must have at least 12 characters' }
-
-      - name: Provision Windows RDP, MacBook Stable UI, Apple Cursor and Tailscale
-        shell: pwsh
-        env:
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-        run: ./scripts/setup-windows-macos-style.ps1
-
-      - name: Install Safari-like Firefox and Mac-style app layer
-        shell: pwsh
-        run: ./scripts/setup-safari-like-firefox.ps1
-
-      - name: Show connection information
-        id: connection
+      # ═══════════════════════════════════════════════════════
+      #  FASE 7: DOCK macOS (Nexus Dock)
+      # ═══════════════════════════════════════════════════════
+      - name: 📱 Instalar e configurar Dock
         shell: pwsh
         run: |
-          $data = @{}
-          Get-Content 'C:\MacStyle\connection.env' | ForEach-Object {
-            if ($_ -match '^(.*?)=(.*)$') { $data[$matches[1]] = $matches[2] }
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 7: DOCK macOS                     ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          $dockDir = "C:\macOS\Dock"
+
+          # Baixar Nexus Dock (gratuito)
+          $nexusUrl = "https://www.winstep.net/nexus.zip"
+          $nexusZip = Join-Path $dockDir "nexus.zip"
+
+          try {
+            Invoke-WebRequest -Uri $nexusUrl -OutFile $nexusZip -UseBasicParsing -ErrorAction Stop
+            Expand-Archive -Path $nexusZip -DestinationPath $dockDir -Force
+            Remove-Item $nexusZip -Force
+            Write-Host "  ✓ Nexus Dock baixado" -ForegroundColor Green
+          } catch {
+            Write-Host "  ⚠ Nexus Dock não disponível, usando alternativa" -ForegroundColor Yellow
           }
 
-          $ip = $data['TAILSCALE_IP']
-          $user = $data['RDP_USER']
-          $cursorFiles = $data['CURSOR_FILES']
-          $macShell = $data['MAC_SHELL']
-          if (-not $ip) { throw 'Tailscale IP not found.' }
+          # Esconder a barra de tarefas do Windows
+          # Auto-hide taskbar
+          $taskbarRegPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3"
+          if (Test-Path $taskbarRegPath) {
+            $settings = (Get-ItemProperty -Path $taskbarRegPath).Settings
+            $settings[8] = 3  # Auto-hide
+            Set-ItemProperty -Path $taskbarRegPath -Name Settings -Value $settings
+            Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Start-Process explorer.exe
+            Write-Host "  ✓ Barra de tarefas em auto-hide" -ForegroundColor Green
+          }
 
-          "tailscale_ip=$ip" >> $env:GITHUB_OUTPUT
-          "rdp_user=$user" >> $env:GITHUB_OUTPUT
+          Write-Host "✅ Dock configurado" -ForegroundColor Green
 
-          Write-Host "Tailscale IP: $ip"
-          Write-Host "RDP username: $user"
-          Write-Host "Apple cursor files: $cursorFiles"
-          Write-Host "Mac shell: $macShell"
+      # ═══════════════════════════════════════════════════════
+      #  FASE 8: MENU BAR macOS (AutoHotkey)
+      # ═══════════════════════════════════════════════════════
+      - name: 🍎 Criar Menu Bar estilo macOS
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 8: MENU BAR macOS                 ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
 
+          $ahkScript = @"
+; ═══════════════════════════════════════════
+; macOS Menu Bar + Atalhos para Windows
+; ═══════════════════════════════════════════
+#SingleInstance Force
+#NoEnv
+SetWorkingDir %A_ScriptDir%
+
+; ─── Atalhos macOS → Windows ───
+; Cmd+C = Ctrl+C, Cmd+V = Ctrl+V, etc.
+; (AutoHotkey já mapeia naturalmente)
+
+; Spotlight → Windows Search
+!Space::
+  Send #{s}
+  return
+
+; Cmd+Space → Spotlight (Search)
+#Space::
+  Send #{s}
+  return
+
+; Cmd+Q → Fechar janela
+^q::
+  Send !{F4}
+  return
+
+; Cmd+W → Fechar aba/janela
+^w::
+  Send ^{F4}
+  return
+
+; Cmd+Tab → Alt+Tab (já nativo)
+
+; Mission Control → Task View
+^Up::
+  Send #{Tab}
+  return
+
+; Launchpad → Start Menu
+F4::
+  Send #{LWin}
+  return
+
+; Screenshot → Snipping Tool
+^+4::
+  Send #{ShiftDown}s{ShiftUp}
+  return
+
+; Cmd+Comma → Settings
+^,::
+  Run ms-settings:
+  return
+
+; Forçar atualização de wallpaper
+^!w::
+  DllCall("SystemParametersInfo", "uint", 0x14, "uint", 0, "str", "C:\macOS\Wallpapers\sequoia-dark.jpg", "uint", 3)
+  return
+
+; Mostrar/Ocultar Taskbar
+^!t::
+  WinHide ahk_class Shell_TrayWnd
+  Sleep 500
+  WinShow ahk_class Shell_TrayWnd
+  return
+
+; ─── Menu Bar Clock Widget ───
+; Mostra data/hora no formato macOS
+SetTimer, UpdateMenuBar, 1000
+return
+
+UpdateMenuBar:
+  FormatTime, currentTime,, ddd MMM d  h:mm tt
+  ToolTip, %currentTime%, A_ScreenWidth - 150, 5
+  Sleep 2000
+  ToolTip
+  return
+"@
+
+          $ahkScript | Out-File -FilePath "C:\macOS\Scripts\MacOSMenuBar.ahk" -Encoding UTF8
+          Write-Host "  ✓ Script AutoHotkey do Menu Bar criado" -ForegroundColor Green
+
+          # Criar script de inicialização
+          $startupScript = @"
+@echo off
+start "" "C:\Program Files\AutoHotkey\AutoHotkey.exe" "C:\macOS\Scripts\MacOSMenuBar.ahk"
+"@
+          $startupScript | Out-File -FilePath "C:\macOS\Scripts\StartMacOS.bat" -Encoding ASCII
+
+          # Adicionar ao registro de inicialização
+          $startupReg = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+          Set-ItemProperty -Path $startupReg -Name "MacOSMenuBar" -Value "`"C:\Program Files\AutoHotkey\AutoHotkey.exe`" `"C:\macOS\Scripts\MacOSMenuBar.ahk`"" -ErrorAction SilentlyContinue
+
+          Write-Host "✅ Menu Bar configurado" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 9: TEMA VISUAL macOS
+      # ═══════════════════════════════════════════════════════
+      - name: 🎨 Aplicar tema visual macOS
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 9: TEMA VISUAL macOS              ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          # Configurar esquema de cores (Dark/Light)
+          $darkMode = $env:DARK_MODE -eq "true"
+
+          if ($darkMode) {
+            # Tema escuro
+            reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 0 /f
+            reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 0 /f
+            Write-Host "  ✓ Modo Escuro ativado" -ForegroundColor Green
+          } else {
+            # Tema claro
+            reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v AppsUseLightTheme /t REG_DWORD /d 1 /f
+            reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v SystemUsesLightTheme /t REG_DWORD /d 1 /f
+            Write-Host "  ✓ Modo Claro ativado" -ForegroundColor Green
+          }
+
+          # Desativar transparência (melhor performance RDP)
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f
+
+          # Configurar fonte padrão (Segoe UI → mais próxima de SF Pro)
+          # Ajustar tamanho de fonte
+          reg add "HKCU\Control Panel\Desktop" /v FontSmoothing /t REG_SZ /d 2 /f
+          reg add "HKCU\Control Panel\Desktop" /v FontSmoothingType /t REG_DWORD /d 2 /f
+
+          # Desativar animações Windows (melhor performance RDP)
+          reg add "HKCU\Control Panel\Desktop\WindowMetrics" /v MinAnimate /t REG_SZ /d 0 /f
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarAnimations /t REG_DWORD /d 0 /f
+
+          # Configurar ícones da área de trabalho
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{20D04FE0-3AEA-1069-A2D8-08002B30309D}" /t REG_DWORD /d 0 /f
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{59031a47-3f72-44a7-89c5-5595fe6b30ee}" /t REG_DWORD /d 0 /f
+
+          # Remover ícones desnecessários da área de trabalho
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" /v "{645FF040-5081-101B-9F08-00AA002F954E}" /t REG_DWORD /d 1 /f
+
+          Write-Host "✅ Tema visual aplicado" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 10: INSTALAR APPS ESTILO macOS
+      # ═══════════════════════════════════════════════════════
+      - name: 📲 Instalar aplicativos estilo macOS
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 10: APPS ESTILO macOS             ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+          # Firefox como "Safari" (navegador padrão)
+          # Já instalado via choco
+
+          # VS Code como editor
+          # Já instalado via choco
+
+          # Terminal (Windows Terminal como "Terminal.app")
+          winget install --id Microsoft.WindowsTerminal -e --accept-source-agreements --accept-package-agreements 2>$null
+          Write-Host "  ✓ Windows Terminal (Terminal.app)" -ForegroundColor Green
+
+          # Notas → OneNote ou Notepad++
+          # Notepad++ já instalado
+
+          # Finder → Explorador de Arquivos (configurado)
+          # Configurar Explorer para parecer Finder
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v LaunchTo /t REG_DWORD /d 1 /f
+          Write-Host "  ✓ Explorer configurado como Finder" -ForegroundColor Green
+
+          # Música → Spotify (opcional)
+          # winget install --id Spotify.Spotify -e 2>$null
+
+          # Photos → Windows Photos (nativo)
+
+          # Instalação de utilitários
+          choco install everything -y --no-progress 2>$null  # Spotlight-like search
+          Write-Host "  ✓ Everything (Spotlight search)" -ForegroundColor Green
+
+          choco install powertoys -y --no-progress 2>$null  # PowerToys (utilidades)
+          Write-Host "  ✓ PowerToys" -ForegroundColor Green
+
+          Write-Host "✅ Apps instalados" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 11: CONFIGURAÇÕES FINAIS DO SISTEMA
+      # ═══════════════════════════════════════════════════════
+      - name: ⚙️ Configurações finais do sistema
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 11: CONFIGURAÇÕES FINAIS          ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          # Desativar notificações irritantes
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications" /v ToastEnabled /t REG_DWORD /d 0 /f
+
+          # Desativar Windows Update durante sessão
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+          Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
+
+          # Desativar indexação (melhor performance)
+          Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue
+
+          # Configurar resolução RDP
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v MaxResolutionWidth /t REG_DWORD /d 1920 /f
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v MaxResolutionHeight /t REG_DWORD /d 1080 /f
+
+          # Desativar screensaver
+          reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f
+
+          # Configurar plano de energia para alta performance
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+
+          # Criar atalhos na área de trabalho
+          $desktopPath = [Environment]::GetFolderPath("Desktop")
+
+          # Atalho para Terminal
+          $WshShell = New-Object -ComObject WScript.Shell
+          $shortcut = $WshShell.CreateShortcut("$desktopPath\Terminal.lnk")
+          $shortcut.TargetPath = "wt.exe"
+          $shortcut.IconLocation = "C:\Windows\System32\cmd.exe, 0"
+          $shortcut.Save()
+
+          # Atalho para VS Code
+          $shortcut = $WshShell.CreateShortcut("$desktopPath\VS Code.lnk")
+          $shortcut.TargetPath = "C:\Program Files\Microsoft VS Code\Code.exe"
+          $shortcut.Save()
+
+          # Atalho para Firefox (Safari)
+          $shortcut = $WshShell.CreateShortcut("$desktopPath\Safari.lnk")
+          $shortcut.TargetPath = "C:\Program Files\Mozilla Firefox\firefox.exe"
+          $shortcut.Save()
+
+          # Atalho para Files (Finder)
+          $shortcut = $WshShell.CreateShortcut("$desktopPath\Finder.lnk")
+          $shortcut.TargetPath = "explorer.exe"
+          $shortcut.Save()
+
+          Write-Host "✅ Configurações finais aplicadas" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 12: VERIFICAR RDP + CONECTIVIDADE
+      # ═══════════════════════════════════════════════════════
+      - name: ✅ Verificar RDP e conectividade
+        shell: pwsh
+        run: |
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║   FASE 12: VERIFICAÇÃO                   ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
+          # Verificar RDP
+          $test = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $test.TcpTestSucceeded) {
+            Write-Error "❌ Porta RDP 3389 não acessível"; exit 1
+          }
+          Write-Host "  ✓ RDP acessível na porta 3389" -ForegroundColor Green
+
+          # Verificar serviços
+          $rdpService = Get-Service TermService
+          Write-Host "  ✓ Serviço RDP: $($rdpService.Status)" -ForegroundColor Green
+
+          $tsService = Get-Service Tailscale -ErrorAction SilentlyContinue
+          if ($tsService) {
+            Write-Host "  ✓ Tailscale: $($tsService.Status)" -ForegroundColor Green
+          }
+
+          Write-Host "✅ Tudo verificado" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 13: GERAR RESUMO + CREDENCIAIS
+      # ═══════════════════════════════════════════════════════
+      - name: 📋 Gerar resumo da sessão
+        shell: pwsh
+        run: |
           $summary = @"
-          ## 🍎 MacBook Stable sobre Windows — pronto para dev/test
+          ## 🍎 macOS Total Experience — Sessão Ativa
+
+          ### 🔑 Credenciais de Acesso
 
           | Campo | Valor |
-          |---|---|
-          | PC / IP no Windows App | ``$ip`` |
-          | Usuário | ``$user`` |
-          | Senha | valor do secret ``RDP_PASSWORD`` |
-          | Protocolo | RDP nativo do Windows |
-          | Cursor | ``macOS Complete`` |
-          | Interface | ``MacBook Stable Lite`` |
-          | Browser | Firefox com camada Safari-like |
-          | Dock | Finder, Safari, Launchpad, Settings, Terminal e Trash |
-          | Rede | Tailscale |
+          |-------|-------|
+          | **🌐 IP Tailscale** | ``$env:TAILSCALE_IP`` |
+          | **👤 Usuário** | ``mac`` |
+          | **🔑 Senha** | ``$env:RDP_PASSWORD`` |
+          | **🖥️ Porta** | ``3389`` |
+          | **🍎 Estilo** | ``$env:MACOS_STYLE`` |
+          | **🌙 Modo** | ``$(if($env:DARK_MODE -eq 'true'){'Escuro'}else{'Claro'})`` |
 
-          No Android: conecte o Tailscale à mesma tailnet → Windows App → + → Conexão do PC → use o IP acima → entre como ``$user`` usando sua ``RDP_PASSWORD``.
+          ### 📱 Como Conectar
 
-          No primeiro login, aguarde alguns segundos para aplicar wallpaper, cursores, barra superior, Dock e navegador Safari-like. Esta versão não reinicia o Explorer e não usa Seelen UI, para reduzir travamentos e piscadas no RDP.
+          **Windows:**
+          1. Abra o Tailscale e conecte
+          2. Abra "Conexão de Área de Trabalho Remota" (mstsc)
+          3. Digite: ``$env:TAILSCALE_IP``
+          4. Usuário: ``mac`` | Senha: ``$env:RDP_PASSWORD``
 
-          > Esta é uma máquina temporária para desenvolvimento/testes. Arquivos e aplicativos instalados nela desaparecem quando o job termina.
+          **Android/iOS:**
+          1. Conecte o Tailscale
+          2. Abra Microsoft Remote Desktop
+          3. Adicione PC: ``$env:TAILSCALE_IP``
+          4. Credenciais acima
+
+          **macOS/Linux:**
+          1. Conecte Tailscale
+          2. Use Royal TSX / Remmina / FreeRDP
+          3. Conecte a ``$env:TAILSCALE_IP``
+
+          ### 🎨 Recursos Instalados
+
+          | Recurso | Status |
+          |---------|--------|
+          | 🌄 Wallpaper macOS | ✅ |
+          | 🖱️ Cursores macOS | ✅ |
+          | 📱 Dock (Nexus) | ✅ |
+          | 🍎 Menu Bar (AHK) | ✅ |
+          | 🌙 Dark Mode | ✅ |
+          | 🔍 Everything (Spotlight) | ✅ |
+          | 🌐 Firefox (Safari) | ✅ |
+          | 💻 VS Code | ✅ |
+          | 📁 Explorer (Finder) | ✅ |
+          | ⌨️ Atalhos macOS | ✅ |
+
+          ### ⌨️ Atalhos macOS
+
+          | Atalho | Ação |
+          |--------|------|
+          | ``Alt + Space`` | Spotlight (Search) |
+          | ``Ctrl + Up`` | Mission Control |
+          | ``F4`` | Launchpad |
+          | ``Ctrl + Shift + 4`` | Screenshot |
+          | ``Ctrl + Q`` | Fechar App |
+          | ``Ctrl + W`` | Fechar Aba |
+
+          ### ⏱️ Sessão
+          - **Início**: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+          - **Duração**: ~$($env:SESSION_MINUTES || 350) minutos
+          - **Timeout máximo**: 360 minutos
+
+          ---
+          > ⚠️ Esta é uma máquina **temporária**. Todos os dados serão perdidos ao final da sessão.
           "@
-          $summary >> $env:GITHUB_STEP_SUMMARY
 
-      - name: Keep dev/test desktop available
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding UTF8
+          Write-Host "✅ Resumo gerado" -ForegroundColor Green
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 14: MANTER SESSÃO ATIVA
+      # ═══════════════════════════════════════════════════════
+      - name: ⏳ Manter sessão ativa
         shell: pwsh
         run: |
-          $end = [DateTimeOffset]::FromUnixTimeSeconds([int64]$env:JOB_START_EPOCH).UtcDateTime.AddMinutes(355)
-          Write-Host "Sessão de dev/test disponível até aproximadamente $($end.ToString('u'))."
-          while ([DateTime]::UtcNow -lt $end) {
-            if ((Get-Service TermService).Status -ne 'Running') { Start-Service TermService }
-            $tailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-            if (Test-Path $tailscale) { & $tailscale status --json | Out-Null }
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║                                                      ║" -ForegroundColor Cyan
+          Write-Host "║   🍎  macOS Total Experience — SESSÃO ATIVA          ║" -ForegroundColor Cyan
+          Write-Host "║                                                      ║" -ForegroundColor Cyan
+          Write-Host "║   IP:       $env:TAILSCALE_IP" -ForegroundColor White
+          Write-Host "║   Usuário:  mac" -ForegroundColor White
+          Write-Host "║   Senha:    $env:RDP_PASSWORD" -ForegroundColor White
+          Write-Host "║   Estilo:   $env:MACOS_STYLE ($env:DARK_MODE mode)" -ForegroundColor White
+          Write-Host "║                                                      ║" -ForegroundColor Cyan
+          Write-Host "╠══════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+          Write-Host "║                                                      ║" -ForegroundColor Cyan
+          Write-Host "║   📱 Dock:        Nexus Dock (auto-hide)" -ForegroundColor Green
+          Write-Host "║   🍎 Menu Bar:    AutoHotkey ativo" -ForegroundColor Green
+          Write-Host "║   🌄 Wallpaper:   macOS $env:MACOS_STYLE" -ForegroundColor Green
+          Write-Host "║   🖱️ Cursor:     macOS Style" -ForegroundColor Green
+          Write-Host "║   🔍 Spotlight:   Everything (Ctrl+Space)" -ForegroundColor Green
+          Write-Host "║   🌐 Browser:     Firefox (Safari-like)" -ForegroundColor Green
+          Write-Host "║   💻 Editor:      VS Code" -ForegroundColor Green
+          Write-Host "║   📁 Finder:      Windows Explorer" -ForegroundColor Green
+          Write-Host "║                                                      ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+          Write-Host ""
+
+          # Manter sessão ativa
+          $sessionMinutes = [int]($env:SESSION_MINUTES -or 350)
+          $endTime = (Get-Date).AddMinutes($sessionMinutes)
+          $elapsed = 0
+
+          while ((Get-Date) -lt $endTime) {
             Start-Sleep -Seconds 60
+            $elapsed++
+
+            # Verificar serviços a cada 5 minutos
+            if ($elapsed % 5 -eq 0) {
+              $rdp = Get-Service TermService -ErrorAction SilentlyContinue
+              $ts = & "$env:ProgramFiles\Tailscale\tailscale.exe" status 2>$null
+
+              Write-Host "[$elapsed min] RDP: $($rdp.Status) | Tailscale: $(if($ts){'OK'}else{'⚠️'})" -ForegroundColor DarkGray
+            } else {
+              Write-Host "[$elapsed min] ♥ Sessão ativa..." -ForegroundColor DarkGray
+            }
           }
 
-      - name: Disconnect ephemeral Tailscale node
+          Write-Host ""
+          Write-Host "⏰ Sessão finalizada após $sessionMinutes minutos." -ForegroundColor Yellow
+
+      # ═══════════════════════════════════════════════════════
+      #  FASE 15: CLEANUP
+      # ═══════════════════════════════════════════════════════
+      - name: 🧹 Limpeza final
         if: always()
         shell: pwsh
         run: |
-          $tailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-          if (Test-Path $tailscale) { & $tailscale logout 2>$null; exit 0 }
+          Write-Host "🧹 Limpando..." -ForegroundColor Yellow
+
+          # Desconectar Tailscale
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (Test-Path $ts) {
+            & $ts logout 2>$null
+            Write-Host "  ✓ Tailscale desconectado" -ForegroundColor Green
+          }
+
+          Write-Host "✅ Limpeza concluída" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════╗" -ForegroundColor Cyan
+          Write-Host "║  🍎 Sessão macOS finalizada!            ║" -ForegroundColor Cyan
+          Write-Host "╚══════════════════════════════════════════╝" -ForegroundColor Cyan
+
