@@ -1,0 +1,144 @@
+name: Windows macOS Style - Dev/Test (Tailscale RDP)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-macos-style-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    env:
+      RDP_USER: cloudpc
+      TS_HOSTNAME: gh-macwin-${{ github.run_id }}
+
+    steps:
+      - name: Record job start time
+        shell: pwsh
+        run: |
+          "JOB_START_EPOCH=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" >> $env:GITHUB_ENV
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $files = @(
+            'scripts/setup-windows-macos-style.ps1',
+            'scripts/apply-windows-macos-style-user.ps1',
+            'scripts/start-macbook-lite-shell.ps1',
+            'scripts/setup-safari-like-firefox.ps1',
+            'scripts/apply-safari-like-firefox-user.ps1'
+          )
+
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+
+            if ($errors.Count -gt 0) {
+              Write-Host "Syntax errors in $file"
+              $errors | ForEach-Object { Write-Host $_.Message }
+              exit 1
+            }
+
+            Write-Host "Syntax OK: $file"
+          }
+
+      - name: Validate required secrets
+        shell: pwsh
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTHKEY)) { throw 'Missing secret: TAILSCALE_AUTHKEY' }
+          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) { throw 'Missing secret: RDP_PASSWORD' }
+          if ($env:RDP_PASSWORD.Length -lt 12) { throw 'RDP_PASSWORD must have at least 12 characters' }
+
+      - name: Provision Windows RDP, MacBook Stable UI, Apple Cursor and Tailscale
+        shell: pwsh
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: ./scripts/setup-windows-macos-style.ps1
+
+      - name: Install Safari-like Firefox and Mac-style app layer
+        shell: pwsh
+        run: ./scripts/setup-safari-like-firefox.ps1
+
+      - name: Show connection information
+        id: connection
+        shell: pwsh
+        run: |
+          $data = @{}
+          Get-Content 'C:\MacStyle\connection.env' | ForEach-Object {
+            if ($_ -match '^(.*?)=(.*)$') { $data[$matches[1]] = $matches[2] }
+          }
+
+          $ip = $data['TAILSCALE_IP']
+          $user = $data['RDP_USER']
+          $cursorFiles = $data['CURSOR_FILES']
+          $macShell = $data['MAC_SHELL']
+          if (-not $ip) { throw 'Tailscale IP not found.' }
+
+          "tailscale_ip=$ip" >> $env:GITHUB_OUTPUT
+          "rdp_user=$user" >> $env:GITHUB_OUTPUT
+
+          Write-Host "Tailscale IP: $ip"
+          Write-Host "RDP username: $user"
+          Write-Host "Apple cursor files: $cursorFiles"
+          Write-Host "Mac shell: $macShell"
+
+          $summary = @"
+          ## 🍎 MacBook Stable sobre Windows — pronto para dev/test
+
+          | Campo | Valor |
+          |---|---|
+          | PC / IP no Windows App | ``$ip`` |
+          | Usuário | ``$user`` |
+          | Senha | valor do secret ``RDP_PASSWORD`` |
+          | Protocolo | RDP nativo do Windows |
+          | Cursor | ``macOS Complete`` |
+          | Interface | ``MacBook Stable Lite`` |
+          | Browser | Firefox com camada Safari-like |
+          | Dock | Finder, Safari, Launchpad, Settings, Terminal e Trash |
+          | Rede | Tailscale |
+
+          No Android: conecte o Tailscale à mesma tailnet → Windows App → + → Conexão do PC → use o IP acima → entre como ``$user`` usando sua ``RDP_PASSWORD``.
+
+          No primeiro login, aguarde alguns segundos para aplicar wallpaper, cursores, barra superior, Dock e navegador Safari-like. Esta versão não reinicia o Explorer e não usa Seelen UI, para reduzir travamentos e piscadas no RDP.
+
+          > Esta é uma máquina temporária para desenvolvimento/testes. Arquivos e aplicativos instalados nela desaparecem quando o job termina.
+          "@
+          $summary >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Keep dev/test desktop available
+        shell: pwsh
+        run: |
+          $end = [DateTimeOffset]::FromUnixTimeSeconds([int64]$env:JOB_START_EPOCH).UtcDateTime.AddMinutes(355)
+          Write-Host "Sessão de dev/test disponível até aproximadamente $($end.ToString('u'))."
+          while ([DateTime]::UtcNow -lt $end) {
+            if ((Get-Service TermService).Status -ne 'Running') { Start-Service TermService }
+            $tailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+            if (Test-Path $tailscale) { & $tailscale status --json | Out-Null }
+            Start-Sleep -Seconds 60
+          }
+
+      - name: Disconnect ephemeral Tailscale node
+        if: always()
+        shell: pwsh
+        run: |
+          $tailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
+          if (Test-Path $tailscale) { & $tailscale logout 2>$null; exit 0 }
