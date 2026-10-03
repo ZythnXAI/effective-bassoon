@@ -5,7 +5,8 @@ on:
 
 jobs:
   secure-rdp:
-    runs-on: windows-latest
+    # USANDO O WINDOWS 11 ARM (Processadores modernos e rápidos)
+    runs-on: windows-11-arm
     timeout-minutes: 3600
 
     steps:
@@ -57,9 +58,10 @@ jobs:
               exit 1
           }
 
-      - name: Install Tailscale
+      - name: Install Tailscale (ARM64 Native)
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          # Link atualizado para a versão ARM64 do Tailscale, garantindo compatibilidade nativa com o runner.
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-arm64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
           
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
