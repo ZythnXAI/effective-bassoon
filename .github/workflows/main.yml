@@ -1,383 +1,167 @@
+# RDP em runner Windows do GitHub Actions, acessado via Tailscale.
+# Secrets: TAILSCALE_AUTH_KEY (obrigatório) | RDP_PASSWORD (opcional; se vazio, gera uma senha aleatória)
 name: Leo
-
-# ============================================================
-#  RDP persistente via Tailscale em GitHub Actions
-#  - Animacoes visuais LIGADAS em 1x (DWM + composicao + perfil)
-#  - Nada aqui desliga/desreduz efeitos visuais
-# ============================================================
 
 on:
   workflow_dispatch:
-    inputs:
-      rdp_password:
-        description: "Senha do usuario RDP (vazio = gera uma aleatoria forte)"
-        required: false
-        type: string
 
-# Escalar o workflow inteiro: o token so precisa de permissao minima.
 permissions: {}
+
+defaults:
+  run:
+    shell: pwsh
 
 jobs:
   secure-rdp:
-    name: RDP over Tailscale (anims 1x)
     runs-on: windows-latest
-
-    # Limite real de um job em runner hospedado pelo GitHub = 360 min (6h).
-    # O valor original (99999999999) era invalido/ineficaz.
-    timeout-minutes: 360
-
-    defaults:
-      run:
-        shell: pwsh   # pwsh 7: start mais rapido que powershell.exe 5.1
-
+    timeout-minutes: 360   # máximo de um job em runner hospedado (6 h)
     env:
-      RDP_USER: RDP
-      # Resolve a versao stable em runtime -> nunca mais desatualiza sozinho.
-      TS_PACKAGES_API: "https://pkgs.tailscale.com/stable/?mode=json&os=windows"
-      TS_FALLBACK_VERSION: "1.102.4"
-      KEEPALIVE_SECONDS: "1800"
+      TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
-      # ---------------------------------------------------------------
-      # 1) RDP on + firewall + politicas que definem o pipeline de video
-      # ---------------------------------------------------------------
-      - name: Ativar RDP, firewall e politicas de video
+      - name: RDP + Tailscale
         run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference    = 'SilentlyContinue'
+          if (-not $env:TS_AUTHKEY) { throw 'Secret TAILSCALE_AUTH_KEY nao definido.' }   # falha rapido
 
-          $tsKey  = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
-          $rdpTcp = "$tsKey\WinStations\RDP-Tcp"
+          $ProgressPreference = 'SilentlyContinue'   # downloads bem mais rapidos sem a barra de progresso
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
 
-          # --- Liga o servico de Terminal Server ---
-          Set-ItemProperty $tsKey -Name fDenyTSConnections -Value 0 -Type DWord
-          Set-ItemProperty $rdpTcp -Name fAllowTSConnection -Value 1 -Type DWord
-
-          # --- Seguranca: fica igual ao original (NLA off, layer RDP classico) ---
-          Set-ItemProperty $rdpTcp -Name UserAuthentication -Value 0 -Type DWord
-          Set-ItemProperty $rdpTcp -Name SecurityLayer      -Value 0 -Type DWord
-
-          # --- Politicas de sessao ---
-          $pol = 'HKLM:\SOFTWARE\Policies\Microsoft\NT\Terminal Services'
-          New-Item $pol -Force | Out-Null
-          # 0 = nunca desconecta por inatividade. Sem isso a sessao morre em ~30 min.
-          Set-ItemProperty $pol -Name MaxIdleTime          -Value 0 -Type DWord
-          Set-ItemProperty $pol -Name MaxDisconnectionTime -Value 0 -Type DWord
-
-          # --- PIPELINE DE VIDEO / ANIMACAO ---
-          # chave de politica: e daqui que sai o "anims 1x"
-          Set-ItemProperty $pol -Name fEnableDesktopComposition -Value 1 -Type DWord
-          Set-ItemProperty $pol -Name AVC444ModePreferred       -Value 1 -Type DWord # cor full 4:4:4
-          Set-ItemProperty $pol -Name ImageQuality              -Value 3 -Type DWord # qualidade alta
-
-          # velocidade de apresentacao do DWM: 15 = 60 FPS (default 30 = animacao travada)
-          $ws  = "$tsKey\WinStations"
-          $wsP = "$tsKey\WinStations\RDP-Tcp"
-          foreach ($k in @($ws, $wsP)) {
-            Set-ItemProperty $k -Name fEnableDesktopComposition -Value 1 -Type DWord
-            Set-ItemProperty $k -Name DWMFRAMEINTERVAL           -Value 15 -Type DWord
+          function Set-Reg($Path, $Name, $Value, $Type = 'DWord') {
+              if (-not (Test-Path $Path)) { New-Item $Path -Force | Out-Null }
+              New-ItemProperty $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
           }
 
-          # --- UDP aceso (UDP faz as animacoes ficarem muito mais fluidas que TCP) ---
-          Set-ItemProperty $wsP -Name SelectTransport -Value 0 -Type DWord
-
-          # --- Firewall (via cmdlet, mais rapido que netsh) ---
-          Get-NetFirewallRule -DisplayName 'RDP-Tailscale' -EA SilentlyContinue |
-            Remove-NetFirewallRule -EA SilentlyContinue
-          New-NetFirewallRule -DisplayName 'RDP-Tailscale' -Direction Inbound `
-            -Action Allow -Protocol TCP -LocalPort 3389 -Profile Any | Out-Null
-
-          Restart-Service TermService -Force
-          Write-Host "[ok] RDP ativo, firewall liberado e video/animacao habilitados."
-
-      # ---------------------------------------------------------------
-      # 2) Criar o usuario RDP (fatal se falhar)
-      # ---------------------------------------------------------------
-      - name: Criar usuario RDP
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference    = 'SilentlyContinue'
-
-          if (Get-LocalUser -Name $env:RDP_USER -EA SilentlyContinue) {
-            Remove-LocalUser -Name $env:RDP_USER
+          # 1) Tailscale: baixa e instala em segundo plano enquanto o resto é configurado
+          $install = Start-Job -ScriptBlock {
+              $ProgressPreference = 'SilentlyContinue'
+              $msi = Join-Path $env:RUNNER_TEMP 'tailscale.msi'
+              $ok  = $false
+              foreach ($v in 'latest', '1.82.0') {   # se o "latest" falhar, cai na versão que já funcionava
+                  try {
+                      Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-${v}-amd64.msi" -OutFile $msi -TimeoutSec 120
+                      $ok = $true
+                      break
+                  } catch { Write-Warning "Download do Tailscale ($v) falhou: $_" }
+              }
+              if (-not $ok) { throw 'Nao foi possivel baixar o Tailscale.' }
+              $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+              if ($p.ExitCode -notin 0, 3010) { throw "msiexec terminou com codigo $($p.ExitCode)" }
+              Remove-Item $msi -Force -ErrorAction SilentlyContinue
           }
 
-          # ---- Senha: forte, via RNG criptografico ----
-          $up  = [char[]](65..90)
-          $lo  = [char[]](97..122)
-          $num = [char[]](48..57)
-          $sp  = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+          Write-Host '::group::Configurando RDP'
 
-          $chars = @(
-            $up  | Get-Random -Count 5
-            $lo  | Get-Random -Count 5
-            $num | Get-Random -Count 4
-            $sp  | Get-Random -Count 3
+          # 2) RDP: NLA + TLS, teto de 60 FPS (padrão é 30), UDP liberado e acesso só pela rede Tailscale
+          $tsk = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+          Set-Reg $tsk 'fDenyTSConnections' 0
+          Set-Reg "$tsk\WinStations\RDP-Tcp" 'UserAuthentication' 1
+          Set-Reg "$tsk\WinStations\RDP-Tcp" 'SecurityLayer' 2
+          Set-Reg "$tsk\WinStations" 'DWMFRAMEINTERVAL' 15
+          Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Server\ServerManager' 'DoNotOpenAtLogon' 1   # sem Server Manager no login
+
+          foreach ($proto in 'TCP', 'UDP') {
+              New-NetFirewallRule -DisplayName "RDP-Tailscale-$proto" -Direction Inbound -Action Allow `
+                  -Protocol $proto -LocalPort 3389 -RemoteAddress '100.64.0.0/10', 'fd7a:115c:a1e0::/48' -Profile Any | Out-Null
+          }
+
+          # 3) Animações e efeitos visuais LIGADOS (escala 1x). O perfil padrão é copiado para o usuário RDP no 1º login.
+          try { Set-Service Themes -StartupType Automatic; Start-Service Themes } catch { }
+          $effects = @(
+              @('Control Panel\Desktop',                                            'UserPreferencesMask', 'REG_BINARY', '9E3E078012000000'),
+              @('Control Panel\Desktop',                                            'DragFullWindows',     'REG_SZ',     '1'),
+              @('Control Panel\Desktop\WindowMetrics',                              'MinAnimate',          'REG_SZ',     '1'),
+              @('Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects', 'VisualFXSetting',     'REG_DWORD',  '1'),
+              @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced',      'TaskbarAnimations',   'REG_DWORD',  '1')
           )
-
-          # Fisher-Yates com RNG criptografico (o Sort-Object/Get-Random original era enviesado)
-          $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-          for ($i = $chars.Count - 1; $i -gt 0; $i--) {
-            $buf = [byte[]]::new(4)
-            $rng.GetBytes($buf)
-            $j = [BitConverter]::ToUInt32($buf, 0) % ($i + 1)
-            $chars[$i], $chars[$j] = $chars[$j], $chars[$i]
-          }
-          $password = -join $chars
-
-          # Senha vinda do input do dispatch tem prioridade
-          if ('${{ inputs.rdp_password }}'.Trim()) {
-            $password = '${{ inputs.rdp_password }}'.Trim()
-          }
-          Write-Host "[info] Tamanho da senha: $($password.Length) caracteres."
-
-          $sec = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name $env:RDP_USER -Password $sec `
-            -AccountNeverExpires -PasswordNeverExpires `
-            -Description 'RDP via Tailscale' | Out-Null
-
-          Add-LocalGroupMember -Group 'Administrators' -Member $env:RDP_USER
-          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member $env:RDP_USER -EA SilentlyContinue
-
-          # O perfil de hive do usuario RDP ainda nao existe no primeiro login.
-          # Por isso as animacoes sao semeadas em HKEY_USERS\.Default no passo seguinte:
-          # qualquer perfil novo nasce herdando esse padrao.
-
-          "RDP_USER=$env:RDP_USER"        | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          "RDP_PASSWORD=$password"         | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "[ok] Usuario '$env:RDP_USER' criado como administrador."
-
-      # ---------------------------------------------------------------
-      # 3) ANIMS 1x -- este e o coracao do pedido
-      #    Semeia HKEY_USERS\.Default (perfil padrao) para o usuario RDP
-      #    ja nascer com tudo ligado no primeiro login.
-      # ---------------------------------------------------------------
-      - name: Forcar animacoes em 1x (DWM + perfil padrao)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference    = 'SilentlyContinue'
-
-          # ---------- (a) Chaveiros VisualEffects (Win11) ----------
-          # DefaultValue = 1 -> efeito LIGADO. DefaultApplied = 1 evita
-          # que o Windows reavalie e volte a desligar.
-          $fx = @(
-            'AnimateMinMax',        # animar ao minimizar/maximizar
-            'ComboBoxAnimation',
-            'ControlAnimations',
-            'DragFullWindows',      # arrastar janela inteira
-            'DropShadow',
-            'DWMEnabled',
-            'DWMAeroPeekEnabled',
-            'DWMSaveThumbnailEnabled',
-            'ListBoxSmoothScrolling',
-            'ListviewAlphaSelect',
-            'ListviewShadow',
-            'MenuAnimation',        # fade/slide dos menus
-            'SelectionFade',
-            'TaskbarAnimations',
-            'Themes',
-            'TooltipAnimation'
-          )
-
-          foreach ($root in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects',
-                              'Registry::HKEY_USERS\.Default\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects')) {
-            foreach ($f in $fx) {
-              $k = "$root\$f"
-              New-Item $k -Force | Out-Null
-              Set-ItemProperty $k -Name 'DefaultValue'   -Value 1 -Type DWord
-              Set-ItemProperty $k -Name 'DefaultApplied' -Value 1 -Type DWord
-            }
-          }
-
-          # ---------- (b) VisualFXSetting: 1 = "ativar tudo" ----------
-          foreach ($root in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects',
-                              'Registry::HKEY_USERS\.Default\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects')) {
-            Set-ItemProperty $root -Name 'VisualFXSetting' -Value 1 -Type DWord
-          }
-
-          # ---------- (c) MinAnimate = "1" ----------
-          # e a chave do toggle "Animate windows when minimizing and maximizing".
-          # O valor precisa ser STRING "1", nao DWORD.
-          foreach ($root in @('HKCU:\Control Panel\Desktop\WindowMetrics',
-                              'Registry::HKEY_USERS\.Default\Control Panel\Desktop\WindowMetrics')) {
-            New-Item $root -Force | Out-Null
-            Set-ItemProperty $root -Name 'MinAnimate' -Value '1' -Type String
-          }
-
-          # ---------- (d) Animacoes da barra de tarefas ----------
-          foreach ($root in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced',
-                              'Registry::HKEY_USERS\.Default\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced')) {
-            Set-ItemProperty $root -Name 'TaskbarAnimations' -Value 1 -Type DWord
-          }
-
-          # ---------- (e) UserPreferencesMask ----------
-          # Deixa o Windows gravar a mascara ele mesmo via SystemParametersInfo
-          # (SPIF_UPDATEINIFILE), e depois espelha o resultado no perfil padrao.
-          # Evita chutar os bits de binario na mao.
-          Add-Type @'
-          using System;
-          using System.Runtime.InteropServices;
-          public static class SPI {
-            [DllImport("user32.dll", SetLastError=true)]
-            public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint f);
-          }
-          '@
-
-          $SPIF_UPDATEINIFILE = 0x01
-          $SPIF_SENDCHANGE    = 0x02
-          $flags = $SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE
-
-          $spis = @(
-            @{ Id = 0x0049; Name = 'SPI_SETANIMATION'            },  # MinAnimate
-            @{ Id = 0x1043; Name = 'SPI_SETCLIENTAREAANIMATION' },  # controles dentro da janela
-            @{ Id = 0x1003; Name = 'SPI_SETMENUANIMATION'       },
-            @{ Id = 0x1017; Name = 'SPI_SETTOOLTIPANIMATION'    },
-            @{ Id = 0x1005; Name = 'SPI_SETCOMBOBOXANIMATION'   },
-            @{ Id = 0x004A; Name = 'SPI_SETLISTBOXSMOOTHSCROLL' },
-            @{ Id = 0x1049; Name = 'SPI_SETDWMCLOSEANIMATION'   }
-          )
-
-          foreach ($s in $spis) {
-            [void][SPI]::SystemParametersInfo($s.Id, 0, [IntPtr]1, $flags)
-          }
-          Start-Sleep -Milliseconds 600   # deixa o shell persistir a mascara
-
-          $mask = (Get-ItemProperty 'HKCU:\Control Panel\Desktop' -Name 'UserPreferencesMask' -EA SilentlyContinue).UserPreferencesMask
-          if ($mask -and $mask.Length -ge 4) {
-            Set-ItemProperty 'Registry::HKEY_USERS\.Default\Control Panel\Desktop' `
-              -Name 'UserPreferencesMask' -Value $mask
-            Write-Host ("[ok] UserPreferencesMask espelhado: " + (($mask | ForEach-Object { '{0:X2}' -f $_ }) -join '-'))
+          reg load HKU\TmpDefault "$env:SystemDrive\Users\Default\NTUSER.DAT" | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+              foreach ($e in $effects) {
+                  $key, $name, $type, $data = $e
+                  reg add "HKU\TmpDefault\$key" /v $name /t $type /d $data /f | Out-Null
+              }
+              foreach ($i in 1..10) {   # o hive precisa ser descarregado antes do 1º login
+                  [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+                  reg unload HKU\TmpDefault 2>$null | Out-Null
+                  if ($LASTEXITCODE -eq 0) { break }
+                  Start-Sleep -Milliseconds 500
+              }
+              if ($LASTEXITCODE -ne 0) { Write-Warning 'Nao foi possivel descarregar o perfil padrao.' }
           } else {
-            Write-Warning 'UserPreferencesMask nao foi lida; as chaves VisualFX/MinAnimate ja cobrem.'
+              Write-Warning 'Perfil padrao indisponivel; o Windows usara os efeitos visuais padrao.'
           }
 
-          Write-Host '[ok] Animacoes em 1x semeadas no perfil padrao (HKEY_USERS\.Default).'
-
-      # ---------------------------------------------------------------
-      # 4) Tailscale: resolve a versao stable em runtime
-      # ---------------------------------------------------------------
-      - name: Instalar Tailscale (stable)
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference    = 'SilentlyContinue'
-
-          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          if (Test-Path $exe) {
-            Write-Host '[ok] Tailscale ja instalado; pulando download.'
-            exit 0
+          # 4) Usuário RDP (administrador local)
+          if ($env:RDP_PASSWORD) {
+              $password = $env:RDP_PASSWORD
+              $shown    = '(a que voce definiu no secret RDP_PASSWORD)'
+          } else {
+              $sets  = 'ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!@#$%&*?-_=+'
+              $all   = $sets -join ''
+              $rand  = { param([string]$s) $s[[Security.Cryptography.RandomNumberGenerator]::GetInt32($s.Length)] }
+              $chars = @($sets | ForEach-Object { & $rand $_ }) + @(1..16 | ForEach-Object { & $rand $all })
+              $password = -join ($chars | Sort-Object { [Security.Cryptography.RandomNumberGenerator]::GetInt32([int]::MaxValue) })
+              $shown    = $password
           }
+          New-LocalUser -Name 'RDP' -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -PasswordNeverExpires | Out-Null
+          Add-LocalGroupMember -Group 'Administrators' -Member 'RDP'
+          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
 
-          $version = $null
-          $file    = $null
-          try {
-            $api = Invoke-RestMethod -Uri $env:TS_PACKAGES_API -TimeoutSec 25
-            $version = $api.MSIsVersion
-            $file    = $api.MSIs.amd64
-          } catch {
-            Write-Warning "API de pacotes indisponivel ($($_.Exception.Message)); usando fallback."
+          Restart-Service TermService -Force   # aplica as mudanças de RDP
+          Write-Host '::endgroup::'
+
+          # 5) Aguarda o Tailscale terminar de instalar e conecta
+          Receive-Job $install -Wait -AutoRemoveJob | Out-Null
+          if (-not (Test-Path $ts)) { throw 'Tailscale nao foi instalado.' }
+          try { (Get-Service Tailscale).WaitForStatus('Running', [TimeSpan]::FromSeconds(30)) } catch { Write-Warning $_ }
+
+          $tsArgs = @('up', "--authkey=$env:TS_AUTHKEY", "--hostname=gh-runner-$env:GITHUB_RUN_ID",
+                      '--unattended', '--accept-dns=false', '--timeout=60s')
+          $connected = $false
+          foreach ($attempt in 1..3) {
+              & $ts @tsArgs
+              if ($LASTEXITCODE -eq 0) { $connected = $true; break }
+              Write-Warning "tailscale up falhou (tentativa $attempt/3)"
+              Start-Sleep -Seconds 5
           }
-          if (-not $file) {
-            $version = $env:TS_FALLBACK_VERSION
-            $file    = "tailscale-setup-$version-amd64.msi"
+          if (-not $connected) { throw 'Falha ao conectar no Tailscale. Confira o secret TAILSCALE_AUTH_KEY.' }
+
+          $ip = $null
+          foreach ($i in 1..20) {
+              $ip = & $ts ip -4 2>$null | Select-Object -First 1
+              if ($ip) { break }
+              Start-Sleep -Seconds 1
           }
+          if (-not $ip) { throw 'O Tailscale nao atribuiu um IP.' }
 
-          $url  = "https://pkgs.tailscale.com/stable/$file"
-          $msi  = Join-Path $env:TEMP 'tailscale.msi'
-          $log  = Join-Path $env:TEMP 'tailscale-install.log'
-
-          Write-Host "[info] Baixando $url"
-          # curl.exe e muito mais rapido que Invoke-WebRequest no PowerShell
-          & curl.exe -sSfL --retry 3 --retry-delay 2 -o $msi $url
-          if ($LASTEXITCODE -ne 0) { throw "Download do Tailscale falhou (curl exit $LASTEXITCODE)." }
-
-          $p = Start-Process msiexec.exe -PassThru -Wait -ArgumentList @(
-            '/i', "`"$msi`"", '/quiet', '/norestart', '/l*v', "`"$log`""
-          )
-          if ($p.ExitCode -ne 0) {
-            Get-Content $log -Tail 40 -EA SilentlyContinue | Write-Host
-            throw "msiexec falhou com codigo $($p.ExitCode)."
+          # 6) Confere se o RDP responde no IP do Tailscale
+          $listening = $false
+          foreach ($i in 1..15) {
+              $c = [Net.Sockets.TcpClient]::new()
+              try { $listening = $c.ConnectAsync($ip, 3389).Wait(1000) -and $c.Connected } catch { } finally { $c.Dispose() }
+              if ($listening) { break }
+              Start-Sleep -Seconds 1
           }
+          if (-not $listening) { throw "A porta 3389 nao respondeu em $ip." }
 
-          Remove-Item $msi, $log -Force -EA SilentlyContinue
-          if (-not (Test-Path $exe)) { throw 'Tailscale instalado mas o binario nao foi encontrado.' }
-          Write-Host "[ok] Tailscale $version instalado."
+          Write-Host ''
+          Write-Host '=============== ACESSO RDP ==============='
+          Write-Host "Endereco : $ip"
+          Write-Host 'Usuario  : RDP'
+          Write-Host "Senha    : $shown"
+          Write-Host '=========================================='
+          Write-Host 'Dica: no mstsc > Experiencia, escolha "LAN" e marque todas as opcoes (animacoes).'
+          Write-Host ''
 
-      # ---------------------------------------------------------------
-      # 5) Conectar no tailnet e validar
-      # ---------------------------------------------------------------
-      - name: Conectar Tailscale e validar RDP
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference    = 'SilentlyContinue'
-          $exe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-          if (-not '${{ secrets.TAILSCALE_AUTH_KEY }}'.Trim()) {
-            throw 'Secret TAILSCALE_AUTH_KEY vazio. Configure em Settings > Secrets > Actions.'
-          }
-          & $exe up --authkey="${{ secrets.TAILSCALE_AUTH_KEY }}" --hostname="gh-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT" --timeout=60s
-
-          # Aguarda o IP com backoff
-          $tsIP = $null
-          foreach ($wait in @(3, 5, 8, 12, 15)) {
-            Start-Sleep $wait
-            $tsIP = (& $exe ip -4 2>$null | Select-Object -First 1)
-            if ($tsIP) { break }
-          }
-          if (-not $tsIP) { throw 'Tailscale nao atribuiu um IP apos 43s.' }
-
-          "TAILSCALE_IP=$tsIP" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "[ok] Tailscale IP: $tsIP"
-
-          $status = (& $exe status --json 2>$null | ConvertFrom-Json).BackendState
-          Write-Host "[info] BackendState: $status"
-
-          # Prova real de ponta a ponta: sai do node e volta pela rede overlay
-          & $exe ping --timeout=8s --c 3 100.100.100.100 | Out-Null
-          Write-Host "[info] Tailscale ping 100.100.100.100 exit=$LASTEXITCODE (informativo)"
-
-          # Alerta de client-side (nao derruba o run)
-          try {
-            $probe = Test-NetConnection -ComputerName $tsIP -Port 3389 -InformationLevel Quiet -WarningAction SilentlyContinue
-            if (-not $probe) { Write-Warning 'TCP 3389 ainda nao aceitou. A sessao pode ja estar pronta.' }
-            else { Write-Host '[ok] TCP 3389 respondeu.' }
-          } catch { Write-Warning "Falha ao testar 3389: $($_.Exception.Message)" }
-
-      # ---------------------------------------------------------------
-      # 6) Resumo acessivel + keep-alive silencioso
-      # ---------------------------------------------------------------
-      - name: Resumo e manutencao da sessao
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference    = 'SilentlyContinue'
-          $sec  = [int]$env:KEEPALIVE_SECONDS
-
-          # Format operator em vez de here-string interpolado: evita conflito
-          # entre os backticks do markdown e o escape do PowerShell.
-          $block = @'
-          | | |
-          |---|---|
-          | **Host Tailscale** | `{0}` |
-          | **Usuario** | `{1}` |
-          | **Senha** | `{2}` |
-          | **Porta** | `3389` |
-          | **Animacoes** | 1x - DWM on, 60 FPS, desktop composition on |
-          | **Run** | #{3} (tentativa {4}) |
-
-          Conecte com mstsc para `{0}`. Encerre cancelando o run.
-          '@ -f $env:TAILSCALE_IP, $env:RDP_USER, $env:RDP_PASSWORD, $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT
-
-          $block | Out-File $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          Write-Host "`n=== RDP PRONTO ===`nHost: $env:TAILSCALE_IP  |  User: $env:RDP_USER`nSenha: $env:RDP_PASSWORD`n===================`n"
-
-          # Heartbeat nunca pode derrubar o job: ErrorActionPreference=Stop
-          # transformaria qualquer erroando em morte da sessao remota.
+          # Mantém o runner ativo até cancelar ou chegar no limite do job
           while ($true) {
-            try {
-              $free = [math]::Round((Get-PSDrive -Name C -EA Stop).Free / 1GB, 1)
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP ativo | C: $($free)GB livres"
-            } catch {
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP ativo"
-            }
-            Start-Sleep $sec
+              Start-Sleep -Seconds 900
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP ativo em $ip"
           }
+
+      - name: Remover nó do Tailscale
+        if: always()
+        run: |
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (Test-Path $ts) { & $ts logout }
+          exit 0
