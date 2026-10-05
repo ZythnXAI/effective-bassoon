@@ -12,147 +12,100 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Configure RDP, firewall and Windows animations
+      - name: Prepare RDP, Firewall, and Animations
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-
-          $terminalServer = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
           $rdpTcp = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
 
-          # Ativa RDP com NLA e camada de segurança TLS; não desativa autenticação.
-          Set-ItemProperty -Path $terminalServer -Name fDenyTSConnections -Type DWord -Value 0
-          Set-ItemProperty -Path $rdpTcp -Name UserAuthentication -Type DWord -Value 1
-          Set-ItemProperty -Path $rdpTcp -Name SecurityLayer -Type DWord -Value 2
-          Set-ItemProperty -Path $rdpTcp -Name MinEncryptionLevel -Type DWord -Value 3
+          # Ativa RDP com NLA e TLS
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' fDenyTSConnections 0
+          Set-ItemProperty $rdpTcp UserAuthentication 1
+          Set-ItemProperty $rdpTcp SecurityLayer 2
+          Set-ItemProperty $rdpTcp MinEncryptionLevel 3
 
-          # Remove regras RDP genéricas e permite acesso somente a endereços Tailscale.
-          Get-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue |
-            Disable-NetFirewallRule -ErrorAction SilentlyContinue
-          Get-NetFirewallRule -DisplayName 'RDP-Tailscale-TCP','RDP-Tailscale-UDP' -ErrorAction SilentlyContinue |
-            Remove-NetFirewallRule -ErrorAction SilentlyContinue
+          # Configura Firewall restrito ao Tailscale
+          Get-NetFirewallRule -DisplayGroup 'Remote Desktop' | Disable-NetFirewallRule -ErrorAction SilentlyContinue
+          Get-NetFirewallRule -DisplayName 'RDP-Tailscale-TCP','RDP-Tailscale-UDP' | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName 'RDP-Tailscale-TCP' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -RemoteAddress '100.64.0.0/10' | Out-Null
+          New-NetFirewallRule -DisplayName 'RDP-Tailscale-UDP' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 3389 -RemoteAddress '100.64.0.0/10' | Out-Null
 
-          New-NetFirewallRule -DisplayName 'RDP-Tailscale-TCP' -Direction Inbound -Action Allow `
-            -Protocol TCP -LocalPort 3389 -RemoteAddress '100.64.0.0/10' -Profile Any | Out-Null
-          New-NetFirewallRule -DisplayName 'RDP-Tailscale-UDP' -Direction Inbound -Action Allow `
-            -Protocol UDP -LocalPort 3389 -RemoteAddress '100.64.0.0/10' -Profile Any | Out-Null
+          # Inicia o Serviço
+          Set-Service TermService -StartupType Manual
+          Start-Service TermService
 
-          Set-Service -Name TermService -StartupType Manual
-          Start-Service -Name TermService
-
-          # Configura o perfil padrão para a conta RDP: efeitos personalizados com
-          # animações de minimizar/maximizar ligadas. O Windows mantém o tempo nativo (1x).
+          # Configura Perfil Padrão e Animações 1x
           $defaultHiveFile = Join-Path $env:SystemDrive 'Users\Default\NTUSER.DAT'
-          & reg.exe load 'HKU\RDPDefaultProfile' $defaultHiveFile | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'Não foi possível carregar o perfil padrão do Windows.' }
+          reg.exe load 'HKU\RDPDefaultProfile' $defaultHiveFile | Out-Null
           try {
-            $visualEffects = 'Registry::HKEY_USERS\RDPDefaultProfile\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
-            $windowMetrics = 'Registry::HKEY_USERS\RDPDefaultProfile\Control Panel\Desktop\WindowMetrics'
-            New-Item -Path $visualEffects -Force | Out-Null
-            New-Item -Path $windowMetrics -Force | Out-Null
-            New-ItemProperty -Path $visualEffects -Name VisualFXSetting -PropertyType DWord -Value 3 -Force | Out-Null
-            New-ItemProperty -Path $windowMetrics -Name MinAnimate -PropertyType String -Value '1' -Force | Out-Null
-          }
-          finally {
-            & reg.exe unload 'HKU\RDPDefaultProfile' | Out-Null
+            $vfx = 'Registry::HKEY_USERS\RDPDefaultProfile\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects'
+            $wm = 'Registry::HKEY_USERS\RDPDefaultProfile\Control Panel\Desktop\WindowMetrics'
+            New-Item -Path $vfx, $wm -Force | Out-Null
+            
+            # VisualFXSetting = 2 força "Melhor Aparência" (Todas as animações ativas em 1x nativo)
+            New-ItemProperty -Path $vfx -Name VisualFXSetting -PropertyType DWord -Value 2 -Force | Out-Null
+            
+            # MinAnimate = "1" mantém a escala de animação nativa (1x) ativada explicitamente
+            New-ItemProperty -Path $wm -Name MinAnimate -PropertyType String -Value '1' -Force | Out-Null
+          } finally {
+            reg.exe unload 'HKU\RDPDefaultProfile' | Out-Null
           }
 
-      - name: Create RDP account
+      - name: Create RDP Account
         shell: pwsh
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
-            throw 'Configure o secret RDP_PASSWORD nas configurações do repositório antes de executar o workflow.'
+          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) { throw 'Defina o secret RDP_PASSWORD.' }
+          if ($env:RDP_PASSWORD.Length -lt 16 -or $env:RDP_PASSWORD -notmatch '^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^a-zA-Z0-9]).+$') {
+            throw 'RDP_PASSWORD: Mínimo 16 caracteres, com maiúscula, minúscula, número e símbolo.'
           }
-          if ($env:RDP_PASSWORD.Length -lt 16 -or
-              $env:RDP_PASSWORD -notmatch '[A-Z]' -or
-              $env:RDP_PASSWORD -notmatch '[a-z]' -or
-              $env:RDP_PASSWORD -notmatch '\d' -or
-              $env:RDP_PASSWORD -notmatch '[^a-zA-Z0-9]') {
-            throw 'RDP_PASSWORD deve ter pelo menos 16 caracteres e incluir maiúscula, minúscula, número e símbolo.'
-          }
-
-          $securePassword = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
-          if (Get-LocalUser -Name 'RDP' -ErrorAction SilentlyContinue) {
-            Set-LocalUser -Name 'RDP' -Password $securePassword
-          }
-          else {
-            New-LocalUser -Name 'RDP' -Password $securePassword -AccountNeverExpires | Out-Null
-          }
-          Add-LocalGroupMember -Group 'Administrators' -Member 'RDP' -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP' -ErrorAction SilentlyContinue
-          Write-Host 'Conta RDP pronta. A senha não é impressa nos logs.'
+          $pass = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
+          if (Get-LocalUser RDP -ErrorAction SilentlyContinue) { Set-LocalUser RDP -Password $pass }
+          else { New-LocalUser RDP -Password $pass -AccountNeverExpires | Out-Null }
+          Add-LocalGroupMember -Group Administrators, 'Remote Desktop Users' -Member RDP -ErrorAction SilentlyContinue
+          Write-Host 'Conta RDP pronta.'
 
       - name: Install Tailscale
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $installer = Join-Path $env:TEMP 'tailscale-setup.msi'
-          try {
-            Invoke-WebRequest -UseBasicParsing `
-              -Uri 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' `
-              -OutFile $installer
-            $process = Start-Process -FilePath 'msiexec.exe' `
-              -ArgumentList "/i `"$installer`" /qn /norestart" -Wait -PassThru
-            if ($process.ExitCode -notin @(0, 3010)) {
-              throw "Instalador do Tailscale terminou com código $($process.ExitCode)."
-            }
-          }
-          finally {
-            Remove-Item $installer -Force -ErrorAction SilentlyContinue
-          }
+          $msi = Join-Path $env:TEMP 'tailscale-setup.msi'
+          Invoke-WebRequest -UseBasicParsing 'https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi' -OutFile $msi
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait
+          Remove-Item $msi -Force -ErrorAction SilentlyContinue
 
-      - name: Connect to Tailscale and verify RDP
+      - name: Connect Tailscale & Verify
         shell: pwsh
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) {
-            throw 'Configure o secret TAILSCALE_AUTH_KEY nas configurações do repositório.'
-          }
-
-          $tailscale = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'
-          if (-not (Test-Path $tailscale)) { throw 'Executável do Tailscale não encontrado após a instalação.' }
+          if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) { throw 'Defina o secret TAILSCALE_AUTH_KEY.' }
+          $tailscale = "$env:ProgramFiles\Tailscale\tailscale.exe"
 
           & $tailscale up "--authkey=$env:TAILSCALE_AUTH_KEY" "--hostname=gh-rdp-$env:GITHUB_RUN_ID" '--accept-dns=false'
-          if ($LASTEXITCODE -ne 0) { throw 'Não foi possível conectar este runner ao Tailscale.' }
-
-          $tailscaleIp = $null
-          for ($attempt = 0; $attempt -lt 30 -and -not $tailscaleIp; $attempt++) {
+          
+          $ip = $null
+          for ($i=0; $i -lt 30 -and -not $ip; $i++) {
             $candidate = & $tailscale ip -4 2>$null | Select-Object -First 1
             if ($candidate) {
               $candidate = $candidate.Trim()
-              if ($candidate -match '^100\.') { $tailscaleIp = $candidate; break }
-            }
-            Start-Sleep -Seconds 2
+              if ($candidate -match '^100\.') { $ip = $candidate } else { Start-Sleep 2 }
+            } else { Start-Sleep 2 }
           }
-          if (-not $tailscaleIp) { throw 'O Tailscale não atribuiu um endereço IPv4 dentro do tempo esperado.' }
+          if (-not $ip) { throw 'Falha ao obter IP do Tailscale.' }
 
-          $rdpReady = $false
-          for ($attempt = 0; $attempt -lt 15 -and -not $rdpReady; $attempt++) {
-            $rdpReady = Test-NetConnection -ComputerName '127.0.0.1' -Port 3389 -InformationLevel Quiet
-            if (-not $rdpReady) { Start-Sleep -Seconds 2 }
-          }
-          if (-not $rdpReady) { throw 'O serviço RDP não está aceitando conexões na porta 3389.' }
+          for ($i=0; $i -lt 15 -and -not (Test-NetConnection 127.0.0.1 -Port 3389 -InformationLevel Quiet); $i++) { Start-Sleep 2 }
 
-          $summary = @(
-            '## Acesso RDP'
-            ''
-            "- **Endereço Tailscale:** $($tailscaleIp):3389"
-            '- **Usuário:** RDP'
-            '- **Senha:** secret RDP_PASSWORD do repositório (não aparece nos logs).'
-            '- **Animações:** ativadas no perfil padrão, na velocidade nativa do Windows.'
-          )
-          $summary | Add-Content $env:GITHUB_STEP_SUMMARY
-          Write-Host "RDP pronto em $tailscaleIp`:3389. Usuário: RDP. A senha está no secret RDP_PASSWORD."
+          @('## Acesso RDP', '', "- **IP Tailscale:** $ip`:3389", '- **Usuário:** RDP', '- **Senha:** Secret RDP_PASSWORD', '- **Animações:** Ativadas (Escala 1x)') | Add-Content $env:GITHUB_STEP_SUMMARY
+          Write-Host "RDP pronto em $ip`:3389."
 
-      - name: Keep the RDP session available
+      - name: Keep Alive
         shell: pwsh
         run: |
           while ($true) {
-            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RDP ativo; cancele o workflow para encerrar."
-            Start-Sleep -Seconds 300
+            Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] RDP ativo. Cancele o workflow para encerrar."
+            Start-Sleep 300
           }
