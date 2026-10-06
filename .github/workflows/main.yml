@@ -1,35 +1,51 @@
 # Ubuntu Gaming RDP + Tailscale
-# ---------------------------------------------------------------------------
-# Baseado no main.yml original, mas convertido de Windows RDP para Ubuntu.
+# ============================================================
+# Baseado no seu main.yml original, convertido de Windows/RDP
+# para Ubuntu + XFCE + XRDP, mantendo:
+# - Tailscale
+# - RDP
+# - animações/efeitos visuais em escala normal (1x)
+# - usuário RDP
+# - execução por até 6 horas
+#
+# REQUISITOS:
+#   Secret obrigatório: TAILSCALE_AUTH_KEY
+#   Secret opcional:    RDP_PASSWORD
+#
+# HARDWARE:
+#   runs-on: ubuntu-latest = runner padrão.
+#   Para RAM acima do padrão, use o nome/label do seu Larger Runner
+#   no input "runner_label".
+#
+# Os Larger Runners oficiais do GitHub incluem:
+#   4 vCPU / 16 GB
+#   8 vCPU / 32 GB
+#   16 vCPU / 64 GB
+#   32 vCPU / 128 GB
+#   64 vCPU / 256 GB (x64)
+#   96 vCPU / 384 GB (x64)
+#
+# GPU Larger Runner oficial:
+#   4 vCPU + Tesla T4 + 28 GB RAM + 16 GB VRAM
 #
 # IMPORTANTE:
-# 1) "ubuntu-latest" NÃO vira uma VM de 32/64/128/256/384 GB por YAML.
-#    Para mais RAM, use um GitHub-hosted Larger Runner e informe a LABEL dele
-#    no input "runner_label".
-# 2) Para jogar com GPU, o runner precisa ter GPU. O GitHub oferece uma opção
-#    GPU com NVIDIA Tesla T4 (16 GB VRAM / 28 GB RAM).
-# 3) RDP/XFCE funciona muito melhor como desktop remoto leve que um desktop
-#    pesado. A aparência é configurada para lembrar Windows.
-# 4) Steam/Proton são instalados somente quando "install_gaming" estiver ativo.
+#   O YAML NÃO cria RAM/GPU. O hardware é definido pelo runner.
+#   Para jogos, uma GPU é muito mais importante do que simplesmente
+#   colocar 128/256/384 GB de RAM.
 #
-# Secrets:
-#   TAILSCALE_AUTH_KEY = obrigatório
-#   RDP_PASSWORD       = opcional
+# INTERFACE:
+#   XFCE é propositalmente usado por ser leve e funcionar bem com XRDP.
+#   O painel é colocado embaixo e o menu Whisker é usado para uma
+#   experiência visual próxima do Windows.
 #
-# Acesso:
-#   endereço = IP Tailscale exibido no log
-#   porta    = 3389
-#   usuário  = RDP
+# GAMING:
+#   Steam + Vulkan + GameMode + MangoHud + Wine/Winetricks.
+#   Proton é usado pelo próprio Steam para jogos Windows.
 #
-# Para um Larger Runner, use a label copiada em:
-# GitHub -> Organization -> Settings -> Actions -> Runners.
+# ÁUDIO:
+#   PipeWire + módulo XRDP são instalados quando disponíveis.
 #
-# Exemplo de labels possíveis (dependem do runner que você criou):
-#   ubuntu-24.04-32core
-#   ubuntu-24.04-64core
-#   ou a label personalizada que você definiu.
-#
-# ---------------------------------------------------------------------------
+# ============================================================
 
 name: Ubuntu Gaming RDP
 
@@ -37,19 +53,19 @@ on:
   workflow_dispatch:
     inputs:
       runner_label:
-        description: "Label do runner: ubuntu-latest ou seu Larger Runner/GPU"
+        description: "Label do runner. Ex.: ubuntu-latest ou seu Larger Runner"
         required: true
         default: "ubuntu-latest"
         type: string
 
       install_gaming:
-        description: "Instalar Steam + Proton + ferramentas de gaming"
+        description: "Instalar Steam + ferramentas de gaming"
         required: true
         default: true
         type: boolean
 
-      install_extra_gaming:
-        description: "Instalar GameMode, MangoHud e Vulkan"
+      enable_nvidia_tuning:
+        description: "Aplicar ajustes extras se houver NVIDIA"
         required: true
         default: true
         type: boolean
@@ -70,238 +86,53 @@ jobs:
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
-      - name: Hardware e sistema
-        run: |
-          set -euo pipefail
 
-          echo "================ HARDWARE ================"
+      # --------------------------------------------------------
+      # 1. Descobre CPU / RAM / GPU ANTES DA CONFIGURAÇÃO
+      # --------------------------------------------------------
+      - name: Detectar hardware do runner
+        run: |
+          set -uo pipefail
+
+          echo "=============================================="
+          echo "          HARDWARE DO RUNNER"
+          echo "=============================================="
+
+          echo "OS:"
+          . /etc/os-release
+          echo "  $PRETTY_NAME"
+
+          echo
           echo "CPU:"
-          nproc
+          echo "  $(nproc) vCPU"
+          lscpu | grep -E 'Model name|Architecture|CPU\(s\)' | head -n 6 || true
+
           echo
           echo "RAM:"
           free -h
+
           echo
           echo "DISCO:"
-          df -h /
-          echo
-          echo "KERNEL:"
-          uname -a
-          echo
-          echo "OS:"
-          cat /etc/os-release
+          df -h / | tail -n 1
+
           echo
           echo "GPU PCI:"
-          lspci | grep -Ei 'vga|3d|display|nvidia|amd|intel' || true
+          lspci | grep -Ei 'vga|3d|nvidia|amd|radeon|intel' || true
+
           echo
           echo "NVIDIA:"
-          nvidia-smi || true
-          echo "=========================================="
-
-      - name: Instalar desktop, XRDP e dependências
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            xfce4 \
-            xfce4-goodies \
-            xrdp \
-            xorgxrdp \
-            dbus-x11 \
-            policykit-1 \
-            openssl \
-            curl \
-            wget \
-            unzip \
-            pciutils \
-            mesa-utils \
-            htop \
-            pavucontrol \
-            network-manager \
-            ca-certificates \
-            software-properties-common
-
-          # Serviços necessários ao desktop remoto.
-          sudo systemctl enable xrdp
-          sudo systemctl restart xrdp
-
-          # XRDP inicia uma sessão XFCE.
-          sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
-          #!/bin/sh
-          export LANG=C.UTF-8
-          export LC_ALL=C.UTF-8
-          export XDG_CURRENT_DESKTOP=XFCE
-          export XDG_SESSION_DESKTOP=xfce
-          export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg
-          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/local/share:/usr/share
-          export LIBGL_ALWAYS_INDIRECT=0
-
-          if [ -r /etc/profile ]; then
-            . /etc/profile
-          fi
-
-          startxfce4
-          EOF
-
-          sudo chmod +x /etc/xrdp/startwm.sh
-
-          # Configura o xrdp para usar Xorg.
-          sudo sed -i 's/^port=.*/port=3389/' /etc/xrdp/xrdp.ini || true
-          sudo systemctl restart xrdp
-
-      - name: Criar usuário RDP
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${RDP_PASSWORD:-}" ]]; then
-            PASSWORD="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9!@#$%&*+=' | head -c 24)"
-            if [[ ${#PASSWORD} -lt 16 ]]; then
-              PASSWORD="$(openssl rand -hex 16)"
-            fi
-            SHOWN_PASSWORD="$PASSWORD"
+          if command -v nvidia-smi >/dev/null 2>&1; then
+            nvidia-smi || true
           else
-            PASSWORD="$RDP_PASSWORD"
-            SHOWN_PASSWORD="(definida no secret RDP_PASSWORD)"
+            echo "  NVIDIA não detectada via nvidia-smi."
           fi
 
-          if id RDP >/dev/null 2>&1; then
-            echo "RDP:${PASSWORD}" | sudo chpasswd
-          else
-            sudo useradd -m -s /bin/bash RDP
-            echo "RDP:${PASSWORD}" | sudo chpasswd
-          fi
+          echo "=============================================="
 
-          sudo usermod -aG sudo,ssl-cert,audio,video RDP
-
-          # Permite administração durante a sessão.
-          echo 'RDP ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/rdp-user >/dev/null
-          sudo chmod 440 /etc/sudoers.d/rdp-user
-
-          # Impede XFCE de salvar a sessão anterior e causar conflitos no runner.
-          sudo -u RDP mkdir -p /home/RDP/.config/xfce4
-          sudo -u RDP touch /home/RDP/.Xauthority || true
-
-          # Guarda senha apenas no ambiente desta execução.
-          echo "RDP_PASSWORD_DISPLAY=$SHOWN_PASSWORD" >> "$GITHUB_ENV"
-
-      - name: Interface XFCE com aparência de Windows + animações
-        run: |
-          set -euo pipefail
-
-          sudo -u RDP mkdir -p \
-            /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml
-
-          # Ativa compositor/efeitos leves.
-          sudo -u RDP tee /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml >/dev/null <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <channel name="xfwm4" version="1.0">
-            <property name="general" type="empty">
-              <property name="use_compositing" type="bool" value="true"/>
-              <property name="box_move" type="bool" value="false"/>
-              <property name="box_resize" type="bool" value="false"/>
-              <property name="button_layout" type="string" value="O|HMC"/>
-              <property name="show_dock_shadow" type="bool" value="true"/>
-              <property name="show_frame_shadow" type="bool" value="true"/>
-              <property name="show_popup_shadow" type="bool" value="true"/>
-              <property name="theme" type="string" value="Default"/>
-            </property>
-          </channel>
-          EOF
-
-          # Painel inferior estilo Windows.
-          sudo -u RDP tee /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml >/dev/null <<'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <channel name="xfce4-panel" version="1.0">
-            <property name="panels" type="array">
-              <value type="int" value="1"/>
-              <property name="panel-1" type="empty">
-                <property name="position" type="string" value="p=10;x=0;y=0"/>
-                <property name="length" type="uint" value="100"/>
-                <property name="position-locked" type="bool" value="true"/>
-                <property name="size" type="uint" value="40"/>
-              </property>
-            </property>
-          </channel>
-          EOF
-
-          sudo chown -R RDP:RDP /home/RDP/.config
-
-      - name: Otimizações de desempenho
-        run: |
-          set -euo pipefail
-
-          # Desativa suspensão/hibernação do runner.
-          sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
-
-          # Aumenta limites úteis para processos/Steam.
-          sudo tee /etc/security/limits.d/99-gaming.conf >/dev/null <<'EOF'
-          RDP soft nofile 1048576
-          RDP hard nofile 1048576
-          EOF
-
-          # Swappiness baixo: prefere RAM, mas não desativa swap à força.
-          if [[ -f /etc/sysctl.conf ]]; then
-            echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-gaming.conf >/dev/null
-            sudo sysctl --system >/dev/null 2>&1 || true
-          fi
-
-          # GameMode se estiver instalado.
-          if command -v gamemoded >/dev/null 2>&1; then
-            sudo -u RDP gamemoded -t || true
-          fi
-
-      - name: Instalar Steam, Proton e ferramentas de jogos
-        if: ${{ inputs.install_gaming }}
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-
-          # Habilita componentes comuns para Steam.
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            steam-installer \
-            cabextract \
-            winetricks \
-            wine64 \
-            wine32 \
-            vulkan-tools \
-            mesa-vulkan-drivers \
-            mesa-vulkan-drivers:i386
-
-          # Diretórios Steam.
-          sudo -u RDP mkdir -p /home/RDP/.steam/steam/compatibilitytools.d
-
-          # Steam normalmente baixa/atualiza Proton pelo próprio cliente.
-          # Não forçamos um Proton específico para evitar quebrar jogos.
-          echo "Steam/Proton: instalação concluída."
-        continue-on-error: true
-
-      - name: Ferramentas extras de gaming
-        if: ${{ inputs.install_extra_gaming }}
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-
-          sudo apt-get install -y \
-            gamemode \
-            mangohud \
-            mesa-utils \
-            vulkan-tools
-
-          echo "========== VULKAN =========="
-          vulkaninfo --summary 2>/dev/null || true
-          echo "============================"
-
-          echo "========== GPU =========="
-          glxinfo -B 2>/dev/null || true
-          nvidia-smi 2>/dev/null || true
-          echo "========================="
-
-      - name: Instalar e conectar Tailscale
+      # --------------------------------------------------------
+      # 2. Ubuntu + XFCE + XRDP
+      # --------------------------------------------------------
+      - name: Instalar desktop, XRDP e componentes multimídia
         run: |
           set -euo pipefail
 
@@ -310,108 +141,727 @@ jobs:
             exit 1
           fi
 
-          curl -fsSL https://tailscale.com/install.sh | sh
+          export DEBIAN_FRONTEND=noninteractive
 
-          sudo tailscale up \
-            --authkey="${TS_AUTHKEY}" \
-            --hostname="gh-ubuntu-gaming-${GITHUB_RUN_ID}" \
-            --accept-dns=false \
-            --ssh=false
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common ca-certificates curl wget gnupg
 
-          sleep 3
+          # Habilita repositórios usados por Steam e dependências.
+          sudo add-apt-repository -y universe || true
+          sudo add-apt-repository -y multiverse || true
+          sudo dpkg --add-architecture i386 || true
+          sudo apt-get update
 
-          IP="$(sudo tailscale ip -4 | head -n 1)"
+          sudo apt-get install -y \
+            xfce4 \
+            xfce4-goodies \
+            xfce4-whiskermenu-plugin \
+            xfce4-terminal \
+            xrdp \
+            xorgxrdp \
+            dbus-x11 \
+            dbus-user-session \
+            policykit-1 \
+            mesa-utils \
+            pciutils \
+            netcat-openbsd \
+            pavucontrol \
+            pipewire \
+            pipewire-pulse \
+            wireplumber \
+            htop \
+            btop \
+            git \
+            unzip \
+            p7zip-full \
+            cabextract \
+            winbind \
+            fonts-liberation \
+            fonts-liberation2 \
+            fonts-noto-core \
+            fonts-noto-cjk \
+            fonts-noto-color-emoji
 
-          if [[ -z "${IP}" ]]; then
-            echo "::error::Tailscale não atribuiu IP."
-            exit 1
+          # Pacotes de áudio XRDP; podem não existir em todas as imagens.
+          sudo apt-get install -y \
+            pipewire-module-xrdp \
+            libpipewire-0.3-modules-xrdp \
+            2>/dev/null || true
+
+          # Stack de gaming. Estes pacotes são opcionais para o funcionamento do RDP.
+          sudo apt-get install -y \
+            wine64 \
+            wine32 \
+            winetricks \
+            gamemode \
+            mangohud \
+            vulkan-tools \
+            mesa-vulkan-drivers \
+            mesa-vulkan-drivers:i386 \
+            libvulkan1 \
+            libvulkan1:i386 \
+            pulseaudio-utils \
+            alsa-utils \
+            alsa-tools \
+            2>/dev/null || true
+
+          # ----------------------------------------------------
+          # XRDP
+          # ----------------------------------------------------
+          # O pacote pode iniciar o daemon automaticamente durante o apt.
+          # Paramos tudo e configuramos primeiro.
+          sudo systemctl stop xrdp 2>/dev/null || true
+          sudo systemctl stop xrdp-sesman 2>/dev/null || true
+          sudo pkill -x xrdp 2>/dev/null || true
+          sudo pkill -x xrdp-sesman 2>/dev/null || true
+
+          sudo adduser xrdp ssl-cert || true
+
+          # Sessão gráfica XFCE.
+          sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
+          #!/bin/sh
+
+          if test -r /etc/profile; then
+              . /etc/profile
           fi
 
-          echo "TAILSCALE_IP=${IP}" >> "$GITHUB_ENV"
+          export LANG=en_US.UTF-8
+          export LANGUAGE=en_US:en
+          export LC_ALL=en_US.UTF-8
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_SESSION_DESKTOP=xfce
+          export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg:/etc/xdg
+          export XDG_DATA_DIRS=/usr/local/share:/usr/share
+          export LIBGL_ALWAYS_INDIRECT=0
 
-      - name: Firewall RDP somente pelo Tailscale
+          unset DBUS_SESSION_BUS_ADDRESS
+          unset XDG_RUNTIME_DIR
+
+          if command -v dbus-run-session >/dev/null 2>&1; then
+              exec dbus-run-session startxfce4
+          fi
+
+          exec startxfce4
+          EOF
+          sudo chmod +x /etc/xrdp/startwm.sh
+
+          # Força TCP IPv4 explícito. Isso evita problemas de bind entre IPv4/IPv6
+          # e deixa o RDP independente de qualquer transporte vsock.
+          sudo cp -f /etc/xrdp/xrdp.ini /etc/xrdp/xrdp.ini.bak
+
+          sudo python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("/etc/xrdp/xrdp.ini")
+          s = p.read_text()
+          out = []
+          port_done = False
+          vsock_done = False
+
+          for line in s.splitlines():
+              stripped = line.strip()
+
+              if stripped.startswith("port=") and not stripped.startswith(";"):
+                  out.append("port=tcp://:3389")
+                  port_done = True
+              elif stripped.startswith("use_vsock=") and not stripped.startswith(";"):
+                  out.append("use_vsock=false")
+                  vsock_done = True
+              elif stripped.startswith("tcp_nodelay=") and not stripped.startswith(";"):
+                  out.append("tcp_nodelay=true")
+              elif stripped.startswith("tcp_keepalive=") and not stripped.startswith(";"):
+                  out.append("tcp_keepalive=true")
+              elif stripped.startswith("max_bpp=") and not stripped.startswith(";"):
+                  out.append("max_bpp=32")
+              else:
+                  out.append(line)
+
+          if not port_done:
+              for i, line in enumerate(out):
+                  if line.strip() == "[Globals]":
+                      out.insert(i + 1, "port=tcp://:3389")
+                      break
+
+          if not vsock_done:
+              out.append("use_vsock=false")
+
+          p.write_text("\n".join(out) + "\n")
+          PY
+
+          # Validação sintática simples do arquivo antes de iniciar.
+          sudo /usr/sbin/xrdp --help >/dev/null 2>&1 || true
+
+          echo "XRDP configurado; será iniciado somente depois que o Tailscale estiver pronto."
+
+      # --------------------------------------------------------
+      # 3. Perfil visual: XFCE com visual próximo ao Windows
+      #    + animações/efeitos ON
+      # --------------------------------------------------------
+      - name: Configurar interface estilo Windows e animações 1x
         run: |
           set -euo pipefail
 
-          # UFW é configurado para bloquear entrada por padrão e permitir
-          # somente RDP vindo da rede Tailscale.
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Cria usuário RDP.
+          if [[ -n "${RDP_PASSWORD:-}" ]]; then
+            PASSWORD="$RDP_PASSWORD"
+            SHOWN_PASSWORD="(definida no secret RDP_PASSWORD)"
+          else
+            PASSWORD="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#$%&*+=?-' | head -c 24)"
+            SHOWN_PASSWORD="$PASSWORD"
+          fi
+
+          if id RDP >/dev/null 2>&1; then
+            echo "RDP já existe; atualizando senha."
+            echo "RDP:${PASSWORD}" | sudo chpasswd
+          else
+            sudo useradd -m -s /bin/bash RDP
+            echo "RDP:${PASSWORD}" | sudo chpasswd
+          fi
+
+          sudo usermod -aG sudo,ssl-cert,audio,video,render,plugdev RDP || true
+
+          # Sudo sem senha dentro da sessão RDP.
+          echo 'RDP ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/RDP >/dev/null
+          sudo chmod 440 /etc/sudoers.d/RDP
+
+          # Configuração personalizada da sessão.
+          sudo -u RDP mkdir -p \
+            /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml \
+            /home/RDP/.config/autostart \
+            /home/RDP/.local/bin
+
+          # xfconf precisa de uma sessão D-Bus gráfica.
+          # Portanto, a configuração é aplicada automaticamente no login RDP.
+          sudo -u RDP tee /home/RDP/.local/bin/configure-xfce-gaming.sh >/dev/null <<'EOF'
+          #!/bin/bash
+          set +e
+
+          xfconf-query -c xsettings -p /Net/ThemeName -n -t string -s "Greybird"
+          xfconf-query -c xsettings -p /Net/IconThemeName -n -t string -s "elementary-xfce-dark"
+
+          # Visual 1x: compositor, sombras e animações ligados.
+          xfconf-query -c xfwm4 -p /general/use_compositing -n -t bool -s true
+          xfconf-query -c xfwm4 -p /general/show_frame_shadow -n -t bool -s true
+          xfconf-query -c xfwm4 -p /general/show_popup_shadow -n -t bool -s true
+          xfconf-query -c xsettings -p /Gtk/EnableAnimations -n -t bool -s true
+
+          # Barra inferior semelhante ao Windows.
+          xfconf-query -c xfce4-panel -p /panels/panel-1/position -n -t string -s "p=10;x=0;y=0"
+          xfconf-query -c xfce4-panel -p /panels/panel-1/size -n -t uint -s 38
+          xfconf-query -c xfce4-panel -p /panels/panel-1/length -n -t double -s 100
+          xfconf-query -c xfce4-panel -p /panels/panel-1/position-locked -n -t bool -s true
+
+          # Sem bloqueio automático/suspensão na sessão.
+          xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t int -s 0
+          xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/lock-screen-suspend-hibernate -n -t bool -s false
+
+          touch "$HOME/.xfce4-gaming-ready"
+          exit 0
+          EOF
+          sudo chmod +x /home/RDP/.local/bin/configure-xfce-gaming.sh
+
+          sudo -u RDP tee /home/RDP/.config/autostart/configure-xfce-gaming.desktop >/dev/null <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=XFCE Gaming Visual Configuration
+          Exec=/home/RDP/.local/bin/configure-xfce-gaming.sh
+          OnlyShowIn=XFCE;
+          X-GNOME-Autostart-enabled=true
+          NoDisplay=true
+          EOF
+
+          # Ativa GameMode quando um jogo suportar.
+          sudo -u RDP mkdir -p /home/RDP/.config
+          sudo -u RDP tee /home/RDP/.config/environment.d/90-gaming.conf >/dev/null <<'EOF'
+          MANGOHUD=0
+          DXVK_ASYNC=0
+          vblank_mode=0
+          EOF
+
+          # Autostart de áudio e configurações de sessão.
+          sudo -u RDP tee /home/RDP/.config/autostart/pulse.desktop >/dev/null <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Audio
+          Exec=pipewire
+          OnlyShowIn=XFCE;
+          X-GNOME-Autostart-enabled=true
+          EOF
+
+          # Garante permissões corretas.
+          sudo chown -R RDP:RDP /home/RDP
+          sudo chmod 700 /home/RDP
+
+          # Evita sleep/hibernação do sistema.
+          sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
+
+          # Guarda credenciais para a etapa final.
+          printf '%s' "$PASSWORD" | sudo tee /tmp/rdp_password >/dev/null
+          printf '%s' "$SHOWN_PASSWORD" | sudo tee /tmp/rdp_password_display >/dev/null
+          sudo chmod 600 /tmp/rdp_password /tmp/rdp_password_display
+
+      # --------------------------------------------------------
+      # 4. Steam + Proton + ferramentas de jogo
+      # --------------------------------------------------------
+      - name: Instalar Steam e stack de gaming
+        if: ${{ inputs.install_gaming }}
+        run: |
+          set -euo pipefail
+
+          export DEBIAN_FRONTEND=noninteractive
+
+          sudo apt-get update
+
+          # steam-installer é o pacote oficial disponível no multiverse.
+          sudo apt-get install -y steam-installer steam-devices || true
+
+          # Dependências 32-bit que ajudam jogos Windows/Proton.
+          sudo apt-get install -y \
+            steam-libs \
+            steam-libs-i386 \
+            libgl1:i386 \
+            libglu1-mesa:i386 \
+            libpulse0:i386 \
+            libasound2t64:i386 \
+            2>/dev/null || true
+
+          # Wine/Proton helpers.
+          sudo apt-get install -y \
+            wine64 \
+            wine32 \
+            winetricks \
+            gamemode \
+            mangohud \
+            vulkan-tools \
+            2>/dev/null || true
+
+          # Inicializa a pasta da Steam sem abrir interface gráfica.
+          sudo -u RDP mkdir -p /home/RDP/.steam/steam
+          sudo chown -R RDP:RDP /home/RDP/.steam
+
+          # Atalhos no desktop.
+          sudo -u RDP tee /home/RDP/Desktop/Steam.desktop >/dev/null <<'EOF'
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Steam
+          Comment=Steam
+          Exec=steam
+          Icon=steam
+          Terminal=false
+          Categories=Game;
+          EOF
+          sudo chmod +x /home/RDP/Desktop/Steam.desktop
+
+          sudo -u RDP tee /home/RDP/Desktop/Steam-Gamescope.desktop >/dev/null <<'EOF'
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Steam
+          Comment=Steam
+          Exec=steam
+          Icon=steam
+          Terminal=false
+          Categories=Game;
+          EOF
+          sudo chmod +x /home/RDP/Desktop/Steam-Gamescope.desktop
+
+          # Verifica se o Vulkan está disponível.
+          echo "========== VULKAN =========="
+          vulkaninfo --summary 2>&1 | head -n 80 || true
+          echo "============================"
+
+      # --------------------------------------------------------
+      # 5. NVIDIA / GPU: só ajusta se realmente existir
+      # --------------------------------------------------------
+      - name: Detectar e otimizar NVIDIA
+        if: ${{ inputs.enable_nvidia_tuning }}
+        run: |
+          set -uo pipefail
+
+          echo "========== GPU =========="
+
+          NVIDIA_FOUND=0
+
+          if command -v nvidia-smi >/dev/null 2>&1; then
+            if nvidia-smi >/tmp/nvidia_smi.txt 2>&1; then
+              NVIDIA_FOUND=1
+              cat /tmp/nvidia_smi.txt
+
+              echo
+              echo "GPU identificada:"
+              nvidia-smi --query-gpu=name,memory.total,driver_version,pstate,temperature.gpu \
+                --format=csv,noheader || true
+            fi
+          fi
+
+          if [[ "$NVIDIA_FOUND" == "1" ]]; then
+            # Variáveis usadas por aplicações OpenGL/Vulkan em máquinas NVIDIA.
+            sudo tee /etc/profile.d/nvidia-gaming.sh >/dev/null <<'EOF'
+          export __GL_THREADED_OPTIMIZATIONS=1
+          export __GL_YIELD="USLEEP"
+          export __GL_SHADER_DISK_CACHE=1
+          export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
+          EOF
+
+            # Mantém a GPU ativa durante a sessão quando suportado.
+            nvidia-smi -pm 1 >/dev/null 2>&1 || true
+          else
+            echo "NVIDIA não disponível neste runner."
+            echo "Isso é normal no ubuntu-latest padrão."
+          fi
+
+          echo "=========================="
+
+      # --------------------------------------------------------
+      # 6. Otimizações gerais: swappiness, governor, limites
+      # --------------------------------------------------------
+      - name: Aplicar otimizações de desempenho
+        run: |
+          set -uo pipefail
+
+          # Menos tendência a swap em máquinas com muita RAM.
+          sudo sysctl -w vm.swappiness=10 2>/dev/null || true
+          sudo sysctl -w vm.vfs_cache_pressure=50 2>/dev/null || true
+
+          # Governor "performance" se o ambiente expuser cpufreq.
+          if command -v cpupower >/dev/null 2>&1; then
+            sudo cpupower frequency-set -g performance 2>/dev/null || true
+          elif [[ -d /sys/devices/system/cpu/cpu0/cpufreq ]]; then
+            for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+              echo performance | sudo tee "$gov" >/dev/null 2>&1 || true
+            done
+          fi
+
+          # Limites maiores para processos interativos, quando suportados.
+          sudo sed -i \
+            -e '/^\*.*nofile/d' \
+            /etc/security/limits.conf 2>/dev/null || true
+
+          echo "* soft nofile 1048576" | sudo tee -a /etc/security/limits.conf >/dev/null
+          echo "* hard nofile 1048576" | sudo tee -a /etc/security/limits.conf >/dev/null
+
+          echo "Otimizações aplicadas onde a VM permitiu."
+
+      # --------------------------------------------------------
+      # 7. Tailscale
+      # --------------------------------------------------------
+      - name: Instalar e conectar Tailscale
+        run: |
+          set -euo pipefail
+
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Instalação oficial.
+          TMP_INSTALL="$(mktemp)"
+          curl -fsSL https://tailscale.com/install.sh -o "$TMP_INSTALL"
+          sudo sh "$TMP_INSTALL"
+          rm -f "$TMP_INSTALL"
+
+          TS="$(command -v tailscale || true)"
+          if [[ -z "$TS" ]]; then
+            echo "::error::tailscale não encontrado após instalação."
+            exit 1
+          fi
+
+          sudo systemctl enable --now tailscaled
+
+          # Aguarda o daemon.
+          for i in {1..30}; do
+            if sudo "$TS" status >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          # Conecta com hostname único do job.
+          sudo "$TS" up \
+            --authkey="$TS_AUTHKEY" \
+            --hostname="gh-ubuntu-gaming-${GITHUB_RUN_ID}" \
+            --unattended \
+            --accept-dns=false \
+            --timeout=60s
+
+          IP=""
+          for i in {1..30}; do
+            IP="$(sudo "$TS" ip -4 2>/dev/null | head -n 1 || true)"
+            if [[ -n "$IP" ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ -z "$IP" ]]; then
+            echo "::error::Tailscale não atribuiu um IP."
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=$IP" | sudo tee /tmp/tailscale_ip >/dev/null
+
+          echo "=============================================="
+          echo "           TAILSCALE CONECTADO"
+          echo "=============================================="
+          echo "IPv4: $IP"
+          echo "=============================================="
+
+      # --------------------------------------------------------
+      # 8. Firewall: RDP somente pelo Tailscale
+      # --------------------------------------------------------
+      - name: Restringir XRDP ao Tailscale
+        run: |
+          set -euo pipefail
+
           sudo apt-get install -y ufw
 
+          # Política segura.
           sudo ufw --force reset
           sudo ufw default deny incoming
           sudo ufw default allow outgoing
 
-          # IPv4 Tailscale CGNAT.
-          sudo ufw allow from 100.64.0.0/10 to any port 3389 proto tcp
+          # Permite SSH localmente apenas se a imagem precisar disso.
+          sudo ufw allow in on tailscale0 to any port 22 proto tcp || true
 
-          # IPv6 Tailscale.
-          sudo ufw allow from fd7a:115c:a1e0::/48 to any port 3389 proto tcp
+          # RDP SOMENTE pela interface do Tailscale.
+          sudo ufw allow in on tailscale0 to any port 3389 proto tcp
 
           sudo ufw --force enable
+          sudo ufw status verbose
 
-          sudo systemctl restart xrdp
-
-      - name: Verificar RDP e GPU
+      # --------------------------------------------------------
+      # 9. Iniciar/Reparar XRDP e testar
+      # --------------------------------------------------------
+      - name: Iniciar e reparar XRDP
         run: |
-          set -euo pipefail
+          set -u
 
-          echo "========== RDP =========="
-          sudo ss -lntp | grep ':3389' || true
-          echo "========================="
+          IP="$(cat /tmp/tailscale_ip)"
+          RDP_PORT=3389
 
-          echo "========== TAILSCALE =========="
-          sudo tailscale status || true
-          echo "IP: ${TAILSCALE_IP}"
-          echo "==============================="
+          echo "=============================================="
+          echo "             DIAGNÓSTICO XRDP"
+          echo "=============================================="
+          echo "Tailscale IP: $IP"
 
-          echo "========== HARDWARE FINAL =========="
-          echo "CPU: $(nproc) vCPU"
-          echo "RAM:"
-          free -h
+          # Se outra aplicação estiver usando 3389, usa 3390.
+          if sudo ss -lntp | grep -qE ':3389([[:space:]]|$)'; then
+            echo "Porta 3389 ocupada; usando 3390."
+            RDP_PORT=3390
+          fi
+
+          # Configura a porta escolhida.
+          sudo python3 - "$RDP_PORT" <<'PY'
+          from pathlib import Path
+          import sys
+
+          port = int(sys.argv[1])
+          p = Path("/etc/xrdp/xrdp.ini")
+          out = []
+          changed = False
+
+          for line in p.read_text().splitlines():
+              stripped = line.strip()
+              if stripped.startswith("port=") and not stripped.startswith(";"):
+                  out.append(f"port=tcp://:{port}")
+                  changed = True
+              elif stripped.startswith("use_vsock=") and not stripped.startswith(";"):
+                  out.append("use_vsock=false")
+              else:
+                  out.append(line)
+
+          if not changed:
+              for i, line in enumerate(out):
+                  if line.strip() == "[Globals]":
+                      out.insert(i + 1, f"port=tcp://:{port}")
+                      break
+
+          p.write_text("\n".join(out) + "\n")
+          PY
+
+          # Firewall: somente Tailscale.
+          sudo ufw delete allow in on tailscale0 to any port 3389 proto tcp >/dev/null 2>&1 || true
+          sudo ufw delete allow in on tailscale0 to any port 3390 proto tcp >/dev/null 2>&1 || true
+          sudo ufw allow in on tailscale0 to any port "$RDP_PORT" proto tcp
+
+          # Mata qualquer instância anterior.
+          sudo systemctl stop xrdp 2>/dev/null || true
+          sudo systemctl stop xrdp-sesman 2>/dev/null || true
+          sudo pkill -x xrdp 2>/dev/null || true
+          sudo pkill -x xrdp-sesman 2>/dev/null || true
+          sleep 1
+
+          # Prepara socket/runtime.
+          if [[ -x /usr/share/xrdp/socksetup ]]; then
+            sudo /usr/share/xrdp/socksetup || true
+          fi
+
+          # Primeiro método: serviços normais do Ubuntu.
+          sudo systemctl daemon-reload 2>/dev/null || true
+          sudo systemctl start xrdp-sesman 2>/dev/null || true
+          sudo systemctl start xrdp 2>/dev/null || true
+
+          READY=0
+          for i in {1..12}; do
+            if sudo ss -lntp | grep -qE ":${RDP_PORT}([[:space:]]|$)"; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+
+          # Segundo método: fallback --nodaemon.
+          # O projeto xrdp documenta esse modo, e ele evita problemas em
+          # ambientes em que o serviço systemd não mantém o daemon ativo.
+          if [[ "$READY" != "1" ]]; then
+            echo "XRDP não abriu a porta via systemd; usando fallback --nodaemon."
+
+            sudo systemctl stop xrdp 2>/dev/null || true
+            sudo systemctl stop xrdp-sesman 2>/dev/null || true
+            sudo pkill -x xrdp 2>/dev/null || true
+            sudo pkill -x xrdp-sesman 2>/dev/null || true
+            sleep 1
+
+            sudo /usr/share/xrdp/socksetup 2>/dev/null || true
+
+            sudo nohup /usr/sbin/xrdp-sesman --nodaemon \
+              >/tmp/xrdp-sesman-fallback.log 2>&1 </dev/null &
+
+            sleep 1
+
+            sudo nohup /usr/sbin/xrdp --nodaemon \
+              >/tmp/xrdp-fallback.log 2>&1 </dev/null &
+
+            for i in {1..15}; do
+              if sudo ss -lntp | grep -qE ":${RDP_PORT}([[:space:]]|$)"; then
+                READY=1
+                break
+              fi
+              sleep 1
+            done
+          fi
+
           echo
-          echo "GPU:"
-          lspci | grep -Ei 'vga|3d|display|nvidia' || true
-          nvidia-smi || true
-          echo "===================================="
+          echo "========== PROCESSOS XRDP =========="
+          ps aux | grep -E '[x]rdp(-sesman)?' || true
 
-          if ! sudo ss -lnt | grep -q ':3389'; then
-            echo "::error::XRDP não está escutando na porta 3389."
+          echo
+          echo "========== PORTAS =========="
+          sudo ss -lntp | grep -E ':3389|:3390' || true
+
+          echo
+          echo "========== STATUS =========="
+          sudo systemctl --no-pager --full status xrdp 2>/dev/null || true
+          sudo systemctl --no-pager --full status xrdp-sesman 2>/dev/null || true
+
+          echo
+          echo "========== LOGS =========="
+          sudo tail -n 100 /var/log/xrdp.log 2>/dev/null || true
+          sudo tail -n 100 /var/log/xrdp-sesman.log 2>/dev/null || true
+          sudo tail -n 100 /tmp/xrdp-fallback.log 2>/dev/null || true
+          sudo tail -n 100 /tmp/xrdp-sesman-fallback.log 2>/dev/null || true
+
+          if [[ "$READY" != "1" ]]; then
+            echo "::error::XRDP não conseguiu escutar em 3389/3390."
             exit 1
           fi
 
-      - name: Mostrar dados de acesso
-        run: |
-          echo ""
-          echo "======================================================"
-          echo "              UBUNTU GAMING RDP ATIVO"
-          echo "======================================================"
-          echo "Endereço Tailscale : ${TAILSCALE_IP}"
-          echo "Porta               : 3389"
-          echo "Usuário             : RDP"
-          echo "Senha               : ${RDP_PASSWORD_DISPLAY}"
-          echo ""
-          echo "No Windows: abra mstsc.exe"
-          echo "No Android: use um cliente Microsoft Remote Desktop/RDP."
-          echo ""
-          echo "Aparência: XFCE configurado com painel inferior"
-          echo "estilo Windows + compositor/animações."
-          echo ""
-          echo "IMPORTANTE: o desempenho de jogos depende principalmente"
-          echo "da GPU do runner. Mais RAM não cria uma GPU."
-          echo "======================================================"
-          echo ""
+          # Teste local.
+          if ! nc -z -w 3 127.0.0.1 "$RDP_PORT"; then
+            echo "::error::Falha no teste TCP local do XRDP."
+            exit 1
+          fi
 
-      - name: Manter runner ativo
+          # Teste pelo IP do Tailscale.
+          if ! nc -z -w 3 "$IP" "$RDP_PORT"; then
+            echo "::error::XRDP não respondeu pelo Tailscale $IP:$RDP_PORT."
+            exit 1
+          fi
+
+          printf '%s' "$RDP_PORT" | sudo tee /tmp/rdp_port >/dev/null
+          sudo chmod 644 /tmp/rdp_port
+
+          echo "RDP FUNCIONANDO: $IP:$RDP_PORT"
+
+      # --------------------------------------------------------
+      # 10. Informações finais + mantém o runner vivo
+      # --------------------------------------------------------
+      - name: Mostrar dados do RDP
         run: |
           set -euo pipefail
 
+          IP="$(cat /tmp/tailscale_ip)"
+          RDP_PORT="$(cat /tmp/rdp_port)"
+          PASSWORD="$(cat /tmp/rdp_password)"
+          SHOWN_PASSWORD="$(cat /tmp/rdp_password_display)"
+
+          echo
+          echo "======================================================"
+          echo "                 UBUNTU GAMING RDP"
+          echo "======================================================"
+          echo "Endereco RDP : $IP:$RDP_PORT"
+          echo "Usuario      : RDP"
+          echo "Senha        : $SHOWN_PASSWORD"
+          echo
+          echo "Desktop      : XFCE"
+          echo "XRDP         : ativo ($RDP_PORT/TCP)"
+          echo "Steam        : instalado (se habilitado)"
+          echo "Proton       : pelo Steam"
+          echo "GameMode     : instalado"
+          echo "MangoHud     : instalado"
+          echo
+          echo "GPU:"
+          if command -v nvidia-smi >/dev/null 2>&1; then
+            nvidia-smi --query-gpu=name,memory.total,driver_version \
+              --format=csv,noheader 2>/dev/null || echo "NVIDIA não disponível"
+          else
+            lspci | grep -Ei 'vga|3d|nvidia|amd|radeon|intel' || true
+          fi
+          echo
+          echo "CPU/RAM:"
+          echo "  $(nproc) vCPU"
+          free -h | grep Mem:
+          echo
+          echo "======================================================"
+          echo "Dica: para jogar, use uma resolução RDP compatível com"
+          echo "seu dispositivo e evite compressão visual excessiva."
+          echo "======================================================"
+          echo
+
+          # Remove senha temporária de disco.
+          sudo rm -f /tmp/rdp_password /tmp/rdp_password_display
+
+          # Mantém o runner vivo até cancelamento/limite do job.
           while true; do
-            echo "[$(date '+%H:%M:%S')] RDP ativo | CPU=$(nproc) | RAM=$(free -h | awk '/Mem:/ {print $3 "/" $2}') | IP=${TAILSCALE_IP}"
             sleep 900
+
+            NOW="$(date '+%Y-%m-%d %H:%M:%S')"
+
+            echo
+            echo "[$NOW] RDP ativo em $IP"
+
+            # Mostra estado da GPU sem inundar o log.
+            if command -v nvidia-smi >/dev/null 2>&1; then
+              nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total \
+                --format=csv,noheader 2>/dev/null || true
+            fi
           done
 
-      - name: Remover nó Tailscale
+      # --------------------------------------------------------
+      # 11. Limpeza
+      # --------------------------------------------------------
+      - name: Desconectar Tailscale
         if: always()
         run: |
-          sudo tailscale logout 2>/dev/null || true
+          set +e
+
+          if command -v tailscale >/dev/null 2>&1; then
+            sudo tailscale logout
+          fi
+
+          sudo systemctl stop xrdp 2>/dev/null || true
+          sudo systemctl stop xrdp-sesman 2>/dev/null || true
+          sudo pkill -x xrdp 2>/dev/null || true
+          sudo pkill -x xrdp-sesman 2>/dev/null || true
+          sudo ufw disable 2>/dev/null || true
           exit 0
