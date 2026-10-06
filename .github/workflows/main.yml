@@ -13,7 +13,7 @@ defaults:
 
 jobs:
   secure-rdp:
-    runs-on: windows-2025   # Windows Server 2025 (mais recente + CPUs modernas)
+    runs-on: windows-latest   # Windows Server 2025 (mais recente + CPUs modernas)
     timeout-minutes: 360
     env:
       TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
