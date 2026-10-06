@@ -1,6 +1,6 @@
-# Ubuntu + Cinnamon (visual Windows 11) + Tailscale + xrdp
+# RDP em runner Windows do GitHub Actions, acessado via Tailscale.
 # Secrets: TAILSCALE_AUTH_KEY (obrigatório) | RDP_PASSWORD (opcional)
-name: Ubuntu-Win11-RDP
+name: Leo
 
 on:
   workflow_dispatch:
@@ -9,207 +9,232 @@ permissions: {}
 
 defaults:
   run:
-    shell: bash
+    shell: pwsh
 
 jobs:
   secure-rdp:
-    runs-on: ubuntu-latest
+    runs-on: windows-2025   # Windows Server 2025 (mais recente + CPUs modernas)
     timeout-minutes: 360
-
     env:
       TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
-      - name: Setup RDP + Cinnamon + Windows 11 Theme
+      # ---------------------------------------------------------------
+      # 1) Instala apps em BACKGROUND (não bloqueia o RDP)
+      # ---------------------------------------------------------------
+      - name: Instalar aplicativos (winget + Microsoft Store)
+        continue-on-error: true
         run: |
-          set -e
+          $ProgressPreference = 'SilentlyContinue'
+          Write-Host '::group::Instalando aplicativos via winget'
 
-          if [ -z "$TS_AUTHKEY" ]; then
-            echo "::error::Secret TAILSCALE_AUTH_KEY nao definido."
-            exit 1
-          fi
+          # Garante que o winget está disponível
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+              Write-Warning 'winget nao encontrado. Instalando App Installer...'
+              try {
+                  $msix = Join-Path $env:TEMP 'winget.msixbundle'
+                  Invoke-WebRequest -Uri 'https://aka.ms/getwinget' -OutFile $msix -TimeoutSec 120
+                  Add-AppxPackage -Path $msix
+                  Start-Sleep -Seconds 5
+              } catch { Write-Warning "Falha ao instalar o winget: $_" }
+          }
 
-          echo "::group::Atualizando sistema e instalando dependencias"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            cinnamon cinnamon-session cinnamon-settings-daemon \
-            gnome-terminal nautilus \
-            xrdp tigervnc-standalone-server dbus-x11 \
-            curl wget git unzip \
-            gnome-tweaks gnome-shell-extensions \
-            sassc libglib2.0-dev-bin
-          echo "::endgroup::"
+          # Lista de apps (ajuste conforme desejar)
+          $apps = @(
+              'Microsoft.WindowsTerminal','Microsoft.PowerShell','Microsoft.VisualStudioCode',
+              'Google.Chrome','Mozilla.Firefox','7zip.7zip','Notepad++.Notepad++',
+              'VideoLAN.VLC','Microsoft.Paint','Microsoft.WindowsCalculator',
+              'Microsoft.Teams','Zoom.Zoom'
+          )
+          $storeApps = @(
+              '9NKSQGP7F2NH'   # WhatsApp Desktop
+              # '9NCBCSZSJRSB' # Spotify
+              # '9WZDNCRFJ3TJ' # Netflix
+          )
 
-          echo "::group::Configurando xrdp para Cinnamon"
-          # Impede o xrdp de iniciar uma sessao Xorg propria
-          sudo sed -i 's/^new_cursors=true/new_cursors=false/' /etc/xrdp/xrdp.ini
-          sudo sed -i 's/^#xserverbpp=24/xserverbpp=24/' /etc/xrdp/xrdp.ini
+          $failed = @()
+          foreach ($id in $apps) {
+              Write-Host ">> winget: $id"
+              winget install --id $id --exact --silent `
+                  --accept-source-agreements --accept-package-agreements `
+                  --disable-interactivity
+              if ($LASTEXITCODE -ne 0) { $failed += $id }
+          }
+          foreach ($id in $storeApps) {
+              Write-Host ">> msstore: $id"
+              winget install --id $id --exact --source msstore --silent `
+                  --accept-source-agreements --accept-package-agreements `
+                  --disable-interactivity
+              if ($LASTEXITCODE -ne 0) { $failed += $id }
+          }
+          if ($failed.Count) { Write-Warning "Apps com falha: $($failed -join ', ')" }
+          else { Write-Host 'Todos os apps instalados com sucesso.' }
+          Write-Host '::endgroup::'
 
-          # Cria script de inicio para o usuario
-          cat << 'XSESSION' | sudo tee /etc/skel/.xsession > /dev/null
-          #!/bin/bash
-          export XDG_SESSION_DESKTOP=cinnamon
-          export XDG_CURRENT_DESKTOP=X-Cinnamon
-          exec cinnamon-session
-          XSESSION
-          sudo chmod +x /etc/skel/.xsession
+      # ---------------------------------------------------------------
+      # 2) RDP + Tailscale + Resolução 1920x1080
+      # ---------------------------------------------------------------
+      - name: RDP + Tailscale
+        run: |
+          if (-not $env:TS_AUTHKEY) { throw 'Secret TAILSCALE_AUTH_KEY nao definido.' }
 
-          # Configura xrdp para usar o .xsession
-          sudo sed -i 's|^#startwm.sh.*|startwm.sh|' /etc/xrdp/startwm.sh
-          echo '#!/bin/sh' | sudo tee /etc/xrdp/startwm.sh
-          echo 'if [ -r /etc/default/locale ]; then . /etc/default/locale; export LANG LANGUAGE; fi' | sudo tee -a /etc/xrdp/startwm.sh
-          echo 'exec cinnamon-session' | sudo tee -a /etc/xrdp/startwm.sh
-          sudo chmod +x /etc/xrdp/startwm.sh
+          $ProgressPreference = 'SilentlyContinue'
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
 
-          # Desabilita Wayland (xrdp precisa de X11)
-          sudo sed -i 's/#WaylandEnable=false/WaylandEnable=false/' /etc/gdm3/custom.conf
-          sudo systemctl restart xrdp
-          echo "::endgroup::"
+          function Set-Reg($Path, $Name, $Value, $Type = 'DWord') {
+              if (-not (Test-Path $Path)) { New-Item $Path -Force | Out-Null }
+              New-ItemProperty $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+          }
 
-          echo "::group::Aplicando tema Windows 11 (Win11 GTK Theme)"
-          cd /tmp
-          git clone --depth 1 https://github.com/yeyushengfan258/Windows11-gtk-theme.git
-          cd Windows11-gtk-theme
-          ./install.sh -c dark -l
-          cd /tmp
+          # Tailscale: baixa e instala em segundo plano
+          $install = Start-Job -ScriptBlock {
+              $ProgressPreference = 'SilentlyContinue'
+              $msi = Join-Path $env:RUNNER_TEMP 'tailscale.msi'
+              $ok  = $false
+              foreach ($v in 'latest', '1.82.0') {
+                  try {
+                      Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-${v}-amd64.msi" -OutFile $msi -TimeoutSec 120
+                      $ok = $true; break
+                  } catch { Write-Warning "Download Tailscale ($v) falhou: $_" }
+              }
+              if (-not $ok) { throw 'Nao foi possivel baixar o Tailscale.' }
+              $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+              if ($p.ExitCode -notin 0, 3010) { throw "msiexec codigo $($p.ExitCode)" }
+              Remove-Item $msi -Force -ErrorAction SilentlyContinue
+          }
 
-          # Icones Windows 11
-          git clone --depth 1 https://github.com/yeyushengfan258/Win11-icon-theme.git
-          cd Win11-icon-theme
-          ./install.sh
-          cd /tmp
+          Write-Host '::group::Configurando RDP + Resolucao'
 
-          # Cursor Windows 11
-          git clone --depth 1 https://github.com/yeyushengfan258/Win11-cursor-theme.git 2>/dev/null || true
-          if [ -d "Win11-cursor-theme" ]; then
-            cd Win11-cursor-theme
-            ./install.sh 2>/dev/null || true
-            cd /tmp
-          fi
+          # --- RDP core ---
+          $tsk = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
+          Set-Reg $tsk 'fDenyTSConnections' 0
+          Set-Reg "$tsk\WinStations\RDP-Tcp" 'UserAuthentication' 1
+          Set-Reg "$tsk\WinStations\RDP-Tcp" 'SecurityLayer' 2
+          Set-Reg "$tsk\WinStations" 'DWMFRAMEINTERVAL' 15
+          Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Server\ServerManager' 'DoNotOpenAtLogon' 1
 
-          # Aplica tema via gsettings (Cinnamon usa gsettings para temas GTK)
-          # Cria script que sera aplicado no primeiro login
-          cat << 'THEME' | sudo tee /usr/local/bin/apply-win11-theme.sh > /dev/null
-          #!/bin/bash
-          sleep 5
-          gsettings set org.cinnamon.desktop.interface gtk-theme 'Windows11-Dark'
-          gsettings set org.cinnamon.desktop.interface icon-theme 'Win11'
-          gsettings set org.cinnamon.desktop.interface cursor-theme 'Win11'
-          gsettings set org.cinnamon.desktop.background picture-uri 'file:///usr/share/backgrounds/windows11.jpg'
-          gsettings set org.cinnamon.theme name 'Windows11-Dark'
-          THEME
-          sudo chmod +x /usr/local/bin/apply-win11-theme.sh
+          # --- Resolucao padrao 1920x1080 (registro GraphicsDrivers) ---
+          $gfxConfigs = Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Configuration' -ErrorAction SilentlyContinue
+          foreach ($cfg in $gfxConfigs) {
+              $sub = Join-Path $cfg.PSPath '00\00'
+              if (Test-Path $sub) {
+                  Set-Reg $sub 'DefaultSettings.XResolution' 1920
+                  Set-Reg $sub 'DefaultSettings.YResolution' 1080
+                  Set-Reg $sub 'DefaultSettings.RefreshRate' 60
+                  Write-Host "Resolucao fixada em 1920x1080 para $($cfg.PSChildName)"
+              }
+          }
 
-          # Adiciona ao autostart do Cinnamon
-          sudo mkdir -p /etc/skel/.config/autostart
-          cat << 'AUTOSTART' | sudo tee /etc/skel/.config/autostart/apply-win11-theme.desktop > /dev/null
-          [Desktop Entry]
-          Type=Application
-          Name=Apply Win11 Theme
-          Exec=/usr/local/bin/apply-win11-theme.sh
-          Hidden=false
-          X-GNOME-Autostart-enabled=true
-          AUTOSTART
+          # --- Politica de resolucao maxima via Terminal Services ---
+          $tsPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          if (-not (Test-Path $tsPolicy)) { New-Item $tsPolicy -Force | Out-Null }
+          Set-Reg $tsPolicy 'TS_MAXDISPLAYRES' 1
+          Set-Reg $tsPolicy 'MaxXResolution' 1920
+          Set-Reg $tsPolicy 'MaxYResolution' 1080
+          Write-Host 'Politica de resolucao maxima definida (1920x1080).'
 
-          # Copia wallpaper do Windows 11 (substitua pela URL da sua imagem preferida)
-          sudo mkdir -p /usr/share/backgrounds
-          sudo wget -q -O /usr/share/backgrounds/windows11.jpg \
-            "https://images.unsplash.com/photo-1633519237438-7b2b0a1d1b1b?w=1920" 2>/dev/null || true
-          echo "::endgroup::"
+          # --- Firewall RDP apenas via Tailscale ---
+          foreach ($proto in 'TCP', 'UDP') {
+              New-NetFirewallRule -DisplayName "RDP-Tailscale-$proto" -Direction Inbound -Action Allow `
+                  -Protocol $proto -LocalPort 3389 -RemoteAddress '100.64.0.0/10', 'fd7a:115c:a1e0::/48' -Profile Any | Out-Null
+          }
 
-          echo "::group::Criando usuario RDP"
-          if [ -n "$RDP_PASSWORD" ]; then
-            PASSWORD="$RDP_PASSWORD"
-            SHOWN="(a que voce definiu no secret RDP_PASSWORD)"
-          else
-            PASSWORD=$(openssl rand -base64 16 | tr -d '/+=' | head -c 16)
-            SHOWN="$PASSWORD"
-          fi
+          # --- Efeitos visuais ligados no perfil padrao ---
+          try { Set-Service Themes -StartupType Automatic; Start-Service Themes } catch { }
+          $effects = @(
+              @('Control Panel\Desktop', 'UserPreferencesMask', 'REG_BINARY', '9E3E078012000000'),
+              @('Control Panel\Desktop', 'DragFullWindows', 'REG_SZ', '1'),
+              @('Control Panel\Desktop\WindowMetrics', 'MinAnimate', 'REG_SZ', '1'),
+              @('Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects', 'VisualFXSetting', 'REG_DWORD', '1'),
+              @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'TaskbarAnimations', 'REG_DWORD', '1')
+          )
+          reg load HKU\TmpDefault "$env:SystemDrive\Users\Default\NTUSER.DAT" | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+              foreach ($e in $effects) {
+                  $key, $name, $type, $data = $e
+                  reg add "HKU\TmpDefault\$key" /v $name /t $type /d $data /f | Out-Null
+              }
+              foreach ($i in 1..10) {
+                  [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+                  reg unload HKU\TmpDefault 2>$null | Out-Null
+                  if ($LASTEXITCODE -eq 0) { break }
+                  Start-Sleep -Milliseconds 500
+              }
+          } else { Write-Warning 'Perfil padrao indisponivel.' }
 
-          sudo useradd -m -s /bin/bash -G sudo RDP
-          echo "RDP:$PASSWORD" | sudo chpasswd
-          echo "RDP ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/rdp > /dev/null
+          # --- Usuario RDP ---
+          if ($env:RDP_PASSWORD) {
+              $password = $env:RDP_PASSWORD
+              $shown    = '(a que voce definiu no secret RDP_PASSWORD)'
+          } else {
+              $sets  = 'ABCDEFGHJKLMNPQRSTUVWXYZ','abcdefghijkmnopqrstuvwxyz','23456789','!@#$%&*?-_=+'
+              $all   = $sets -join ''
+              $rand  = { param([string]$s) $s[[Security.Cryptography.RandomNumberGenerator]::GetInt32($s.Length)] }
+              $chars = @($sets | ForEach-Object { & $rand $_ }) + @(1..16 | ForEach-Object { & $rand $all })
+              $password = -join ($chars | Sort-Object { [Security.Cryptography.RandomNumberGenerator]::GetInt32([int]::MaxValue) })
+              $shown    = $password
+          }
+          New-LocalUser -Name 'RDP' -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -PasswordNeverExpires | Out-Null
+          Add-LocalGroupMember -Group 'Administrators' -Member 'RDP'
+          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
 
-          # Forca o uso do Cinnamon no login
-          echo "exec cinnamon-session" | sudo tee /home/RDP/.xsession > /dev/null
-          sudo chown RDP:RDP /home/RDP/.xsession
-          echo "::endgroup::"
+          Restart-Service TermService -Force
+          Write-Host '::endgroup::'
 
-          echo "::group::Instalando Tailscale"
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo systemctl enable --now tailscaled
+          # --- Tailscale up ---
+          Receive-Job $install -Wait -AutoRemoveJob | Out-Null
+          if (-not (Test-Path $ts)) { throw 'Tailscale nao foi instalado.' }
+          try { (Get-Service Tailscale).WaitForStatus('Running', [TimeSpan]::FromSeconds(30)) } catch { Write-Warning $_ }
 
-          # Conecta ao Tailscale com retry
-          CONNECTED=false
-          for attempt in 1 2 3; do
-            if sudo tailscale up \
-              --authkey="$TS_AUTHKEY" \
-              --hostname="gh-runner-$GITHUB_RUN_ID" \
-              --unattended \
-              --accept-dns=false \
-              --timeout=60s 2>&1; then
-              CONNECTED=true
-              break
-            fi
-            echo "::warning::tailscale up falhou (tentativa $attempt/3)"
-            sleep 5
-          done
+          $tsArgs = @('up', "--authkey=$env:TS_AUTHKEY", "--hostname=gh-runner-$env:GITHUB_RUN_ID",
+                      '--unattended', '--accept-dns=false', '--timeout=60s')
+          $connected = $false
+          foreach ($attempt in 1..3) {
+              & $ts @tsArgs
+              if ($LASTEXITCODE -eq 0) { $connected = $true; break }
+              Write-Warning "tailscale up falhou (tentativa $attempt/3)"
+              Start-Sleep -Seconds 5
+          }
+          if (-not $connected) { throw 'Falha ao conectar no Tailscale.' }
 
-          if [ "$CONNECTED" = false ]; then
-            echo "::error::Falha ao conectar no Tailscale. Confira o secret TAILSCALE_AUTH_KEY."
-            exit 1
-          fi
+          $ip = $null
+          foreach ($i in 1..20) {
+              $ip = & $ts ip -4 2>$null | Select-Object -First 1
+              if ($ip) { break }
+              Start-Sleep -Seconds 1
+          }
+          if (-not $ip) { throw 'Tailscale nao atribuiu IP.' }
 
-          # Obtem IP do Tailscale
-          IP=""
-          for i in $(seq 1 20); do
-            IP=$(tailscale ip -4 2>/dev/null | head -1)
-            [ -n "$IP" ] && break
-            sleep 1
-          done
+          # --- Verifica RDP ---
+          $listening = $false
+          foreach ($i in 1..15) {
+              $c = [Net.Sockets.TcpClient]::new()
+              try { $listening = $c.ConnectAsync($ip, 3389).Wait(1000) -and $c.Connected } catch { } finally { $c.Dispose() }
+              if ($listening) { break }
+              Start-Sleep -Seconds 1
+          }
+          if (-not $listening) { throw "Porta 3389 nao respondeu em $ip." }
 
-          if [ -z "$IP" ]; then
-            echo "::error::Tailscale nao atribuiu um IP."
-            exit 1
-          fi
-          echo "::endgroup::"
+          Write-Host ''
+          Write-Host '=============== ACESSO RDP ==============='
+          Write-Host "Endereco : $ip"
+          Write-Host 'Usuario  : RDP'
+          Write-Host "Senha    : $shown"
+          Write-Host 'Resolucao: 1920x1080 (padrao)'
+          Write-Host '=========================================='
+          Write-Host 'Dica: no mstsc > Experiencia, escolha "LAN" e marque todas as opcoes.'
+          Write-Host ''
 
-          echo "::group::Verificando RDP na porta 3389"
-          LISTENING=false
-          for i in $(seq 1 15); do
-            if nc -zv "$IP" 3389 2>/dev/null; then
-              LISTENING=true
-              break
-            fi
-            sleep 1
-          done
+          # Mantém o runner ativo
+          while ($true) {
+              Start-Sleep -Seconds 900
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP ativo em $ip"
+          }
 
-          if [ "$LISTENING" = false ]; then
-            echo "::error::A porta 3389 nao respondeu em $IP."
-            exit 1
-          fi
-          echo "::endgroup::"
-
-          echo ""
-          echo "=============== ACESSO RDP ==============="
-          echo "Endereco : $IP"
-          echo "Usuario  : RDP"
-          echo "Senha    : $SHOWN"
-          echo "=========================================="
-          echo "Dica: no mstsc > Experiencia, escolha \"LAN\"."
-          echo ""
-
-          # Mantem o runner ativo
-          while true; do
-            sleep 900
-            echo "[$(date +'%H:%M:%S')] RDP ativo em $IP"
-          done
-
-      - name: Remover no do Tailscale
+      - name: Remover nó do Tailscale
         if: always()
         run: |
-          if command -v tailscale &>/dev/null; then
-            sudo tailscale logout || true
-          fi
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          if (Test-Path $ts) { & $ts logout }
           exit 0
