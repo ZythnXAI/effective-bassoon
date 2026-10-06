@@ -1,207 +1,417 @@
-# RDP em runner Windows do GitHub Actions, acessado via Tailscale.
-# Secrets: TAILSCALE_AUTH_KEY (obrigatório) | RDP_PASSWORD (opcional; se vazio, gera uma senha aleatória)
-name: Leo
+# Ubuntu Gaming RDP + Tailscale
+# ---------------------------------------------------------------------------
+# Baseado no main.yml original, mas convertido de Windows RDP para Ubuntu.
+#
+# IMPORTANTE:
+# 1) "ubuntu-latest" NÃO vira uma VM de 32/64/128/256/384 GB por YAML.
+#    Para mais RAM, use um GitHub-hosted Larger Runner e informe a LABEL dele
+#    no input "runner_label".
+# 2) Para jogar com GPU, o runner precisa ter GPU. O GitHub oferece uma opção
+#    GPU com NVIDIA Tesla T4 (16 GB VRAM / 28 GB RAM).
+# 3) RDP/XFCE funciona muito melhor como desktop remoto leve que um desktop
+#    pesado. A aparência é configurada para lembrar Windows.
+# 4) Steam/Proton são instalados somente quando "install_gaming" estiver ativo.
+#
+# Secrets:
+#   TAILSCALE_AUTH_KEY = obrigatório
+#   RDP_PASSWORD       = opcional
+#
+# Acesso:
+#   endereço = IP Tailscale exibido no log
+#   porta    = 3389
+#   usuário  = RDP
+#
+# Para um Larger Runner, use a label copiada em:
+# GitHub -> Organization -> Settings -> Actions -> Runners.
+#
+# Exemplo de labels possíveis (dependem do runner que você criou):
+#   ubuntu-24.04-32core
+#   ubuntu-24.04-64core
+#   ou a label personalizada que você definiu.
+#
+# ---------------------------------------------------------------------------
+
+name: Ubuntu Gaming RDP
 
 on:
   workflow_dispatch:
     inputs:
       runner_label:
-        description: 'Runner Windows a usar. Padrao: windows-latest. Para mais RAM, informe a etiqueta do larger runner configurado na organizacao.'
-        required: false
-        default: 'windows-latest'
+        description: "Label do runner: ubuntu-latest ou seu Larger Runner/GPU"
+        required: true
+        default: "ubuntu-latest"
         type: string
+
+      install_gaming:
+        description: "Instalar Steam + Proton + ferramentas de gaming"
+        required: true
+        default: true
+        type: boolean
+
+      install_extra_gaming:
+        description: "Instalar GameMode, MangoHud e Vulkan"
+        required: true
+        default: true
+        type: boolean
 
 permissions: {}
 
 defaults:
   run:
-    shell: pwsh
+    shell: bash
 
 jobs:
-  secure-rdp:
-    # IMPORTANTE:
-    # - windows-latest = runner padrao (na configuracao atual do GitHub, 16 GB RAM em repos publicos)
-    # - Para 32/64/128/256/384 GB, use aqui a LABEL de um "larger runner" que sua organizacao tiver criado.
-    #   O nome/label e definido no GitHub; nao existe uma label publica que transforme windows-latest em 384 GB.
-    runs-on: "${{ inputs.runner_label || 'windows-latest' }}"
-    timeout-minutes: 360   # máximo de um job em runner hospedado (6 h)
+  gaming-rdp:
+    runs-on: ${{ inputs.runner_label }}
+    timeout-minutes: 360
+
     env:
       TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
 
     steps:
-      - name: RDP + Tailscale
+      - name: Hardware e sistema
         run: |
-          if (-not $env:TS_AUTHKEY) { throw 'Secret TAILSCALE_AUTH_KEY nao definido.' }   # falha rapido
+          set -euo pipefail
 
-          $ProgressPreference = 'SilentlyContinue'   # downloads bem mais rapidos sem a barra de progresso
-          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          echo "================ HARDWARE ================"
+          echo "CPU:"
+          nproc
+          echo
+          echo "RAM:"
+          free -h
+          echo
+          echo "DISCO:"
+          df -h /
+          echo
+          echo "KERNEL:"
+          uname -a
+          echo
+          echo "OS:"
+          cat /etc/os-release
+          echo
+          echo "GPU PCI:"
+          lspci | grep -Ei 'vga|3d|display|nvidia|amd|intel' || true
+          echo
+          echo "NVIDIA:"
+          nvidia-smi || true
+          echo "=========================================="
 
-          # 0) Detecta os recursos reais do runner.
-          # Nao existe comando PowerShell que crie RAM fisica adicional; o limite vem da VM escolhida.
-          Write-Host '::group::Recursos do runner'
-          try {
-              $cs = Get-CimInstance Win32_ComputerSystem
-              $os = Get-CimInstance Win32_OperatingSystem
-              $ramGB = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
-              $freeGB = [math]::Round((Get-PSDrive -Name C).Free / 1GB, 2)
-              $vcpu = [Environment]::ProcessorCount
+      - name: Instalar desktop, XRDP e dependências
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
 
-              Write-Host "Runner label: ${{ inputs.runner_label || 'windows-latest' }}"
-              Write-Host "vCPU: $vcpu"
-              Write-Host "RAM fisica: $ramGB GB"
-              Write-Host "Espaco livre em C: $freeGB GB"
-              Write-Host "Windows: $($os.Caption) $($os.Version)"
+          sudo apt-get update
 
-              if ($ramGB -lt 24) {
-                  Write-Warning "Este runner tem menos de 24 GB de RAM. Troque a runner_label por um larger runner se sua organizacao tiver um."
-              } elseif ($ramGB -ge 32) {
-                  Write-Host "OK: runner com pelo menos 32 GB de RAM detectado."
-              }
+          sudo apt-get install -y \
+            xfce4 \
+            xfce4-goodies \
+            xrdp \
+            xorgxrdp \
+            dbus-x11 \
+            policykit-1 \
+            openssl \
+            curl \
+            wget \
+            unzip \
+            pciutils \
+            mesa-utils \
+            htop \
+            pavucontrol \
+            network-manager \
+            ca-certificates \
+            software-properties-common
 
-              # Coloca o Windows no plano de alto desempenho quando disponivel.
-              try { powercfg /setactive SCHEME_MIN | Out-Null } catch { }
-          } catch {
-              Write-Warning "Nao foi possivel detectar todos os recursos: $_"
-          }
-          Write-Host '::endgroup::'
+          # Serviços necessários ao desktop remoto.
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
 
-          function Set-Reg($Path, $Name, $Value, $Type = 'DWord') {
-              if (-not (Test-Path $Path)) { New-Item $Path -Force | Out-Null }
-              New-ItemProperty $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
-          }
+          # XRDP inicia uma sessão XFCE.
+          sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
+          #!/bin/sh
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_SESSION_DESKTOP=xfce
+          export XDG_CONFIG_DIRS=/etc/xdg/xdg-xfce:/etc/xdg
+          export XDG_DATA_DIRS=/usr/share/xfce4:/usr/local/share:/usr/share
+          export LIBGL_ALWAYS_INDIRECT=0
 
-          # 1) Tailscale: baixa e instala em segundo plano enquanto o resto é configurado
-          $install = Start-Job -ScriptBlock {
-              $ProgressPreference = 'SilentlyContinue'
-              $msi = Join-Path $env:RUNNER_TEMP 'tailscale.msi'
-              $ok  = $false
-              foreach ($v in 'latest', '1.82.0') {   # se o "latest" falhar, cai na versão que já funcionava
-                  try {
-                      Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-${v}-amd64.msi" -OutFile $msi -TimeoutSec 120
-                      $ok = $true
-                      break
-                  } catch { Write-Warning "Download do Tailscale ($v) falhou: $_" }
-              }
-              if (-not $ok) { throw 'Nao foi possivel baixar o Tailscale.' }
-              $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
-              if ($p.ExitCode -notin 0, 3010) { throw "msiexec terminou com codigo $($p.ExitCode)" }
-              Remove-Item $msi -Force -ErrorAction SilentlyContinue
-          }
+          if [ -r /etc/profile ]; then
+            . /etc/profile
+          fi
 
-          Write-Host '::group::Configurando RDP'
+          startxfce4
+          EOF
 
-          # 2) RDP: NLA + TLS, teto de 60 FPS (padrão é 30), UDP liberado e acesso só pela rede Tailscale
-          $tsk = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
-          Set-Reg $tsk 'fDenyTSConnections' 0
-          Set-Reg "$tsk\WinStations\RDP-Tcp" 'UserAuthentication' 1
-          Set-Reg "$tsk\WinStations\RDP-Tcp" 'SecurityLayer' 2
-          Set-Reg "$tsk\WinStations" 'DWMFRAMEINTERVAL' 15
-          Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Server\ServerManager' 'DoNotOpenAtLogon' 1   # sem Server Manager no login
+          sudo chmod +x /etc/xrdp/startwm.sh
 
-          foreach ($proto in 'TCP', 'UDP') {
-              New-NetFirewallRule -DisplayName "RDP-Tailscale-$proto" -Direction Inbound -Action Allow `
-                  -Protocol $proto -LocalPort 3389 -RemoteAddress '100.64.0.0/10', 'fd7a:115c:a1e0::/48' -Profile Any | Out-Null
-          }
+          # Configura o xrdp para usar Xorg.
+          sudo sed -i 's/^port=.*/port=3389/' /etc/xrdp/xrdp.ini || true
+          sudo systemctl restart xrdp
 
-          # 3) Animações e efeitos visuais LIGADOS (escala 1x). O perfil padrão é copiado para o usuário RDP no 1º login.
-          try { Set-Service Themes -StartupType Automatic; Start-Service Themes } catch { }
-          $effects = @(
-              @('Control Panel\Desktop',                                            'UserPreferencesMask', 'REG_BINARY', '9E3E078012000000'),
-              @('Control Panel\Desktop',                                            'DragFullWindows',     'REG_SZ',     '1'),
-              @('Control Panel\Desktop\WindowMetrics',                              'MinAnimate',          'REG_SZ',     '1'),
-              @('Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects', 'VisualFXSetting',     'REG_DWORD',  '1'),
-              @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced',      'TaskbarAnimations',   'REG_DWORD',  '1')
-          )
-          reg load HKU\TmpDefault "$env:SystemDrive\Users\Default\NTUSER.DAT" | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-              foreach ($e in $effects) {
-                  $key, $name, $type, $data = $e
-                  reg add "HKU\TmpDefault\$key" /v $name /t $type /d $data /f | Out-Null
-              }
-              foreach ($i in 1..10) {   # o hive precisa ser descarregado antes do 1º login
-                  [gc]::Collect(); [gc]::WaitForPendingFinalizers()
-                  reg unload HKU\TmpDefault 2>$null | Out-Null
-                  if ($LASTEXITCODE -eq 0) { break }
-                  Start-Sleep -Milliseconds 500
-              }
-              if ($LASTEXITCODE -ne 0) { Write-Warning 'Nao foi possivel descarregar o perfil padrao.' }
-          } else {
-              Write-Warning 'Perfil padrao indisponivel; o Windows usara os efeitos visuais padrao.'
-          }
+      - name: Criar usuário RDP
+        run: |
+          set -euo pipefail
 
-          # 4) Usuário RDP (administrador local)
-          if ($env:RDP_PASSWORD) {
-              $password = $env:RDP_PASSWORD
-              $shown    = '(a que voce definiu no secret RDP_PASSWORD)'
-          } else {
-              $sets  = 'ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!@#$%&*?-_=+'
-              $all   = $sets -join ''
-              $rand  = { param([string]$s) $s[[Security.Cryptography.RandomNumberGenerator]::GetInt32($s.Length)] }
-              $chars = @($sets | ForEach-Object { & $rand $_ }) + @(1..16 | ForEach-Object { & $rand $all })
-              $password = -join ($chars | Sort-Object { [Security.Cryptography.RandomNumberGenerator]::GetInt32([int]::MaxValue) })
-              $shown    = $password
-          }
-          New-LocalUser -Name 'RDP' -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -PasswordNeverExpires | Out-Null
-          Add-LocalGroupMember -Group 'Administrators' -Member 'RDP'
-          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
+          if [[ -z "${RDP_PASSWORD:-}" ]]; then
+            PASSWORD="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9!@#$%&*+=' | head -c 24)"
+            if [[ ${#PASSWORD} -lt 16 ]]; then
+              PASSWORD="$(openssl rand -hex 16)"
+            fi
+            SHOWN_PASSWORD="$PASSWORD"
+          else
+            PASSWORD="$RDP_PASSWORD"
+            SHOWN_PASSWORD="(definida no secret RDP_PASSWORD)"
+          fi
 
-          Restart-Service TermService -Force   # aplica as mudanças de RDP
-          Write-Host '::endgroup::'
+          if id RDP >/dev/null 2>&1; then
+            echo "RDP:${PASSWORD}" | sudo chpasswd
+          else
+            sudo useradd -m -s /bin/bash RDP
+            echo "RDP:${PASSWORD}" | sudo chpasswd
+          fi
 
-          # 5) Aguarda o Tailscale terminar de instalar e conecta
-          Receive-Job $install -Wait -AutoRemoveJob | Out-Null
-          if (-not (Test-Path $ts)) { throw 'Tailscale nao foi instalado.' }
-          try { (Get-Service Tailscale).WaitForStatus('Running', [TimeSpan]::FromSeconds(30)) } catch { Write-Warning $_ }
+          sudo usermod -aG sudo,ssl-cert,audio,video RDP
 
-          $tsArgs = @('up', "--authkey=$env:TS_AUTHKEY", "--hostname=gh-runner-$env:GITHUB_RUN_ID",
-                      '--unattended', '--accept-dns=false', '--timeout=60s')
-          $connected = $false
-          foreach ($attempt in 1..3) {
-              & $ts @tsArgs
-              if ($LASTEXITCODE -eq 0) { $connected = $true; break }
-              Write-Warning "tailscale up falhou (tentativa $attempt/3)"
-              Start-Sleep -Seconds 5
-          }
-          if (-not $connected) { throw 'Falha ao conectar no Tailscale. Confira o secret TAILSCALE_AUTH_KEY.' }
+          # Permite administração durante a sessão.
+          echo 'RDP ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/rdp-user >/dev/null
+          sudo chmod 440 /etc/sudoers.d/rdp-user
 
-          $ip = $null
-          foreach ($i in 1..20) {
-              $ip = & $ts ip -4 2>$null | Select-Object -First 1
-              if ($ip) { break }
-              Start-Sleep -Seconds 1
-          }
-          if (-not $ip) { throw 'O Tailscale nao atribuiu um IP.' }
+          # Impede XFCE de salvar a sessão anterior e causar conflitos no runner.
+          sudo -u RDP mkdir -p /home/RDP/.config/xfce4
+          sudo -u RDP touch /home/RDP/.Xauthority || true
 
-          # 6) Confere se o RDP responde no IP do Tailscale
-          $listening = $false
-          foreach ($i in 1..15) {
-              $c = [Net.Sockets.TcpClient]::new()
-              try { $listening = $c.ConnectAsync($ip, 3389).Wait(1000) -and $c.Connected } catch { } finally { $c.Dispose() }
-              if ($listening) { break }
-              Start-Sleep -Seconds 1
-          }
-          if (-not $listening) { throw "A porta 3389 nao respondeu em $ip." }
+          # Guarda senha apenas no ambiente desta execução.
+          echo "RDP_PASSWORD_DISPLAY=$SHOWN_PASSWORD" >> "$GITHUB_ENV"
 
-          Write-Host ''
-          Write-Host '=============== ACESSO RDP ==============='
-          Write-Host "Endereco : $ip"
-          Write-Host 'Usuario  : RDP'
-          Write-Host "Senha    : $shown"
-          Write-Host '=========================================='
-          Write-Host 'Dica: no mstsc > Experiencia, escolha "LAN" e marque todas as opcoes (animacoes).'
-          Write-Host 'RAM nao pode ser aumentada por script: para 32/64/128/256/384 GB, a VM precisa ser um larger runner.'
-          Write-Host ''
+      - name: Interface XFCE com aparência de Windows + animações
+        run: |
+          set -euo pipefail
 
-          # Mantém o runner ativo até cancelar ou chegar no limite do job
-          while ($true) {
-              Start-Sleep -Seconds 900
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP ativo em $ip"
-          }
+          sudo -u RDP mkdir -p \
+            /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml
 
-      - name: Remover nó do Tailscale
+          # Ativa compositor/efeitos leves.
+          sudo -u RDP tee /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml >/dev/null <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfwm4" version="1.0">
+            <property name="general" type="empty">
+              <property name="use_compositing" type="bool" value="true"/>
+              <property name="box_move" type="bool" value="false"/>
+              <property name="box_resize" type="bool" value="false"/>
+              <property name="button_layout" type="string" value="O|HMC"/>
+              <property name="show_dock_shadow" type="bool" value="true"/>
+              <property name="show_frame_shadow" type="bool" value="true"/>
+              <property name="show_popup_shadow" type="bool" value="true"/>
+              <property name="theme" type="string" value="Default"/>
+            </property>
+          </channel>
+          EOF
+
+          # Painel inferior estilo Windows.
+          sudo -u RDP tee /home/RDP/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml >/dev/null <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <channel name="xfce4-panel" version="1.0">
+            <property name="panels" type="array">
+              <value type="int" value="1"/>
+              <property name="panel-1" type="empty">
+                <property name="position" type="string" value="p=10;x=0;y=0"/>
+                <property name="length" type="uint" value="100"/>
+                <property name="position-locked" type="bool" value="true"/>
+                <property name="size" type="uint" value="40"/>
+              </property>
+            </property>
+          </channel>
+          EOF
+
+          sudo chown -R RDP:RDP /home/RDP/.config
+
+      - name: Otimizações de desempenho
+        run: |
+          set -euo pipefail
+
+          # Desativa suspensão/hibernação do runner.
+          sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target || true
+
+          # Aumenta limites úteis para processos/Steam.
+          sudo tee /etc/security/limits.d/99-gaming.conf >/dev/null <<'EOF'
+          RDP soft nofile 1048576
+          RDP hard nofile 1048576
+          EOF
+
+          # Swappiness baixo: prefere RAM, mas não desativa swap à força.
+          if [[ -f /etc/sysctl.conf ]]; then
+            echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-gaming.conf >/dev/null
+            sudo sysctl --system >/dev/null 2>&1 || true
+          fi
+
+          # GameMode se estiver instalado.
+          if command -v gamemoded >/dev/null 2>&1; then
+            sudo -u RDP gamemoded -t || true
+          fi
+
+      - name: Instalar Steam, Proton e ferramentas de jogos
+        if: ${{ inputs.install_gaming }}
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Habilita componentes comuns para Steam.
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            steam-installer \
+            cabextract \
+            winetricks \
+            wine64 \
+            wine32 \
+            vulkan-tools \
+            mesa-vulkan-drivers \
+            mesa-vulkan-drivers:i386
+
+          # Diretórios Steam.
+          sudo -u RDP mkdir -p /home/RDP/.steam/steam/compatibilitytools.d
+
+          # Steam normalmente baixa/atualiza Proton pelo próprio cliente.
+          # Não forçamos um Proton específico para evitar quebrar jogos.
+          echo "Steam/Proton: instalação concluída."
+        continue-on-error: true
+
+      - name: Ferramentas extras de gaming
+        if: ${{ inputs.install_extra_gaming }}
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+
+          sudo apt-get install -y \
+            gamemode \
+            mangohud \
+            mesa-utils \
+            vulkan-tools
+
+          echo "========== VULKAN =========="
+          vulkaninfo --summary 2>/dev/null || true
+          echo "============================"
+
+          echo "========== GPU =========="
+          glxinfo -B 2>/dev/null || true
+          nvidia-smi 2>/dev/null || true
+          echo "========================="
+
+      - name: Instalar e conectar Tailscale
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TS_AUTHKEY:-}" ]]; then
+            echo "::error::Secret TAILSCALE_AUTH_KEY não definido."
+            exit 1
+          fi
+
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+          sudo tailscale up \
+            --authkey="${TS_AUTHKEY}" \
+            --hostname="gh-ubuntu-gaming-${GITHUB_RUN_ID}" \
+            --accept-dns=false \
+            --ssh=false
+
+          sleep 3
+
+          IP="$(sudo tailscale ip -4 | head -n 1)"
+
+          if [[ -z "${IP}" ]]; then
+            echo "::error::Tailscale não atribuiu IP."
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=${IP}" >> "$GITHUB_ENV"
+
+      - name: Firewall RDP somente pelo Tailscale
+        run: |
+          set -euo pipefail
+
+          # UFW é configurado para bloquear entrada por padrão e permitir
+          # somente RDP vindo da rede Tailscale.
+          sudo apt-get install -y ufw
+
+          sudo ufw --force reset
+          sudo ufw default deny incoming
+          sudo ufw default allow outgoing
+
+          # IPv4 Tailscale CGNAT.
+          sudo ufw allow from 100.64.0.0/10 to any port 3389 proto tcp
+
+          # IPv6 Tailscale.
+          sudo ufw allow from fd7a:115c:a1e0::/48 to any port 3389 proto tcp
+
+          sudo ufw --force enable
+
+          sudo systemctl restart xrdp
+
+      - name: Verificar RDP e GPU
+        run: |
+          set -euo pipefail
+
+          echo "========== RDP =========="
+          sudo ss -lntp | grep ':3389' || true
+          echo "========================="
+
+          echo "========== TAILSCALE =========="
+          sudo tailscale status || true
+          echo "IP: ${TAILSCALE_IP}"
+          echo "==============================="
+
+          echo "========== HARDWARE FINAL =========="
+          echo "CPU: $(nproc) vCPU"
+          echo "RAM:"
+          free -h
+          echo
+          echo "GPU:"
+          lspci | grep -Ei 'vga|3d|display|nvidia' || true
+          nvidia-smi || true
+          echo "===================================="
+
+          if ! sudo ss -lnt | grep -q ':3389'; then
+            echo "::error::XRDP não está escutando na porta 3389."
+            exit 1
+          fi
+
+      - name: Mostrar dados de acesso
+        run: |
+          echo ""
+          echo "======================================================"
+          echo "              UBUNTU GAMING RDP ATIVO"
+          echo "======================================================"
+          echo "Endereço Tailscale : ${TAILSCALE_IP}"
+          echo "Porta               : 3389"
+          echo "Usuário             : RDP"
+          echo "Senha               : ${RDP_PASSWORD_DISPLAY}"
+          echo ""
+          echo "No Windows: abra mstsc.exe"
+          echo "No Android: use um cliente Microsoft Remote Desktop/RDP."
+          echo ""
+          echo "Aparência: XFCE configurado com painel inferior"
+          echo "estilo Windows + compositor/animações."
+          echo ""
+          echo "IMPORTANTE: o desempenho de jogos depende principalmente"
+          echo "da GPU do runner. Mais RAM não cria uma GPU."
+          echo "======================================================"
+          echo ""
+
+      - name: Manter runner ativo
+        run: |
+          set -euo pipefail
+
+          while true; do
+            echo "[$(date '+%H:%M:%S')] RDP ativo | CPU=$(nproc) | RAM=$(free -h | awk '/Mem:/ {print $3 "/" $2}') | IP=${TAILSCALE_IP}"
+            sleep 900
+          done
+
+      - name: Remover nó Tailscale
         if: always()
         run: |
-          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          if (Test-Path $ts) { & $ts logout }
+          sudo tailscale logout 2>/dev/null || true
           exit 0
