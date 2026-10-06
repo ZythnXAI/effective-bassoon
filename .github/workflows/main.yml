@@ -14,7 +14,7 @@ jobs:
     # CONFIGURAÇÃO DE RAM E CPU (LEIA COM ATENÇÃO)
     # =====================================================================
     # Para 32 GB de RAM e 16 vCPUs (REQUER PLANO PAGO / LARGER RUNNERS):
-    runs-on: windows-latest-32-cores
+    runs-on: windows-latest-16-cores 
     
     # Se você estiver no plano GRATUITO e o job falhar ao iniciar, 
     # comente a linha acima e descomente a linha abaixo (Limitado a 7 GB de RAM):
