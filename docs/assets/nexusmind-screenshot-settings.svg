@@ -1,0 +1,190 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0F172A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1E293B;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="sidebarGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1E293B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0F172A;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="messageGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(0,0,0,0.3)" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="800" fill="url(#bgGradient)" />
+
+  <!-- Main Container -->
+  <g filter="url(#shadow)">
+    <!-- Sidebar -->
+    <rect x="0" y="0" width="280" height="800" fill="url(#sidebarGradient)" rx="8" />
+    
+    <!-- Logo -->
+    <g transform="translate(20, 20)">
+      <polygon points="50,10 90,35 90,85 50,110 10,85 10,35" fill="url(#messageGradient)" opacity="0.9" />
+      <g fill="none" stroke="white" stroke-width="1.5" opacity="0.9">
+        <circle cx="50" cy="60" r="30" stroke="rgba(255,255,255,0.3)" />
+        <circle cx="50" cy="60" r="20" stroke="rgba(255,255,255,0.5)" />
+        <circle cx="30" cy="40" r="2" fill="white" />
+        <circle cx="70" cy="40" r="2" fill="white" />
+        <circle cx="30" cy="80" r="2" fill="white" />
+        <circle cx="70" cy="80" r="2" fill="white" />
+        <line x1="30" y1="40" x2="50" y2="60" stroke="white" />
+        <line x1="70" y1="40" x2="50" y2="60" stroke="white" />
+        <line x1="30" y1="80" x2="50" y2="60" stroke="white" />
+        <line x1="70" y1="80" x2="50" y2="60" stroke="white" />
+      </g>
+      <text x="50" y="125" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="middle" font-weight="600">NEXUSMIND</text>
+    </g>
+
+    <!-- New Chat Button -->
+    <rect x="20" y="100" width="240" height="40" fill="#3B82F6" rx="8" />
+    <text x="140" y="125" font-family="Inter, sans-serif" font-size="14" fill="white" text-anchor="middle" font-weight="500">+ New Chat</text>
+
+    <!-- Model Selector -->
+    <rect x="20" y="160" width="240" height="40" fill="#1E293B" rx="8" />
+    <text x="30" y="185" font-family="Inter, sans-serif" font-size="12" fill="#94A3B8" text-anchor="start">Model:</text>
+    <text x="100" y="185" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">llama-3-8b</text>
+    <polygon points="250,180 240,180 240,190" fill="#94A3B8" />
+
+    <!-- Settings Option Highlighted -->
+    <rect x="20" y="300" width="240" height="40" fill="#3B82F6" rx="6" />
+    <text x="30" y="325" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">Settings</text>
+
+    <!-- Main Content Area -->
+    <rect x="280" y="0" width="920" height="800" fill="#0F172A" />
+
+    <!-- Navbar -->
+    <rect x="280" y="0" width="920" height="60" fill="#1E293B" />
+    <polygon points="300,30 290,20 290,40" fill="#94A3B8" />
+    <text x="330" y="38" font-family="Inter, sans-serif" font-size="14" fill="white" text-anchor="start" font-weight="500">Settings</text>
+
+    <!-- Settings Content -->
+    <g transform="translate(300, 80)">
+      <!-- Profile Section -->
+      <text x="0" y="20" font-family="Inter, sans-serif" font-size="16" fill="white" text-anchor="start" font-weight="600">Profile</text>
+      
+      <rect x="0" y="40" width="600" height="1" fill="#334155" />
+      
+      <!-- User Card -->
+      <rect x="0" y="50" width="600" height="100" fill="#1E293B" rx="8" />
+      <circle cx="60" cy="100" r="25" fill="#3B82F6" />
+      <text x="60" y="108" font-family="Inter, sans-serif" font-size="18" fill="white" text-anchor="middle" font-weight="600">JD</text>
+      
+      <text x="110" y="75" font-family="Inter, sans-serif" font-size="14" fill="white" text-anchor="start" font-weight="600">John Doe</text>
+      <text x="110" y="95" font-family="Inter, sans-serif" font-size="12" fill="#94A3B8" text-anchor="start">john.doe@email.com</text>
+      
+      <rect x="450" y="70" width="120" height="30" fill="#3B82F6" rx="6" />
+      <text x="510" y="90" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="middle" font-weight="500">Edit Profile</text>
+
+      <!-- Appearance Section -->
+      <text x="0" y="180" font-family="Inter, sans-serif" font-size="16" fill="white" text-anchor="start" font-weight="600">Appearance</text>
+      
+      <rect x="0" y="200" width="600" height="1" fill="#334155" />
+      
+      <!-- Theme Options -->
+      <g transform="translate(0, 210)">
+        <text x="0" y="20" font-family="Inter, sans-serif" font-size="13" fill="white" text-anchor="start">Theme</text>
+        
+        <rect x="0" y="40" width="180" height="40" fill="#334155" rx="6" />
+        <text x="10" y="65" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">System</text>
+        <circle cx="170" cy="60" r="8" fill="#3B82F6" />
+        
+        <rect x="200" y="40" width="180" height="40" fill="#334155" rx="6" />
+        <text x="210" y="65" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">Light</text>
+        
+        <rect x="400" y="40" width="180" height="40" fill="#3B82F6" rx="6" />
+        <text x="410" y="65" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">Dark</text>
+        <circle cx="570" cy="60" r="8" fill="#3B82F6" />
+      </g>
+
+      <!-- AI Models Section -->
+      <text x="0" y="300" font-family="Inter, sans-serif" font-size="16" fill="white" text-anchor="start" font-weight="600">AI Models</text>
+      
+      <rect x="0" y="320" width="600" height="1" fill="#334155" />
+      
+      <!-- Model Grid -->
+      <g transform="translate(0, 330)">
+        <!-- GROQ -->
+        <rect x="0" y="0" width="180" height="60" fill="#1E293B" rx="6" />
+        <text x="10" y="25" font-family="Inter, sans-serif" font-size="11" fill="white" text-anchor="start" font-weight="600">GROQ</text>
+        <text x="10" y="40" font-family="Inter, sans-serif" font-size="10" fill="#94A3B8" text-anchor="start">llama-3-8b</text>
+        <rect x="140" y="20" width="30" height="20" fill="#10B981" rx="4" />
+        <text x="155" y="34" font-family="Inter, sans-serif" font-size="8" fill="white" text-anchor="middle">Active</text>
+
+        <!-- E2B -->
+        <rect x="200" y="0" width="180" height="60" fill="#1E293B" rx="6" />
+        <text x="210" y="25" font-family="Inter, sans-serif" font-size="11" fill="white" text-anchor="start" font-weight="600">E2B</text>
+        <text x="210" y="40" font-family="Inter, sans-serif" font-size="10" fill="#94A3B8" text-anchor="start">e2b-code</text>
+        <rect x="350" y="20" width="30" height="20" fill="#3B82F6" rx="4" />
+        <text x="365" y="34" font-family="Inter, sans-serif" font-size="8" fill="white" text-anchor="middle">Enabled</text>
+
+        <!-- Manus AI -->
+        <rect x="400" y="0" width="180" height="60" fill="#1E293B" rx="6" />
+        <text x="410" y="25" font-family="Inter, sans-serif" font-size="11" fill="white" text-anchor="start" font-weight="600">Manus</text>
+        <text x="410" y="40" font-family="Inter, sans-serif" font-size="10" fill="#94A3B8" text-anchor="start">manus-v2</text>
+        <rect x="550" y="20" width="30" height="20" fill="#10B981" rx="4" />
+        <text x="565" y="34" font-family="Inter, sans-serif" font-size="8" fill="white" text-anchor="middle">Active</text>
+
+        <!-- NVIDIA NIM -->
+        <rect x="0" y="70" width="180" height="60" fill="#1E293B" rx="6" />
+        <text x="10" y="95" font-family="Inter, sans-serif" font-size="11" fill="white" text-anchor="start" font-weight="600">NVIDIA</text>
+        <text x="10" y="110" font-family="Inter, sans-serif" font-size="10" fill="#94A3B8" text-anchor="start">nim-llama-3</text>
+        <rect x="140" y="80" width="30" height="20" fill="#3B82F6" rx="4" />
+        <text x="155" y="94" font-family="Inter, sans-serif" font-size="8" fill="white" text-anchor="middle">Enabled</text>
+
+        <!-- Fal AI -->
+        <rect x="200" y="70" width="180" height="60" fill="#1E293B" rx="6" />
+        <text x="210" y="95" font-family="Inter, sans-serif" font-size="11" fill="white" text-anchor="start" font-weight="600">Fal AI</text>
+        <text x="210" y="110" font-family="Inter, sans-serif" font-size="10" fill="#94A3B8" text-anchor="start">fal-llm</text>
+        <rect x="350" y="80" width="30" height="20" fill="#10B981" rx="4" />
+        <text x="365" y="94" font-family="Inter, sans-serif" font-size="8" fill="white" text-anchor="middle">Active</text>
+
+        <!-- Daytona -->
+        <rect x="400" y="70" width="180" height="60" fill="#1E293B" rx="6" />
+        <text x="410" y="95" font-family="Inter, sans-serif" font-size="11" fill="white" text-anchor="start" font-weight="600">Daytona</text>
+        <text x="410" y="110" font-family="Inter, sans-serif" font-size="10" fill="#94A3B8" text-anchor="start">daytona-code</text>
+        <rect x="550" y="80" width="30" height="20" fill="#3B82F6" rx="4" />
+        <text x="565" y="94" font-family="Inter, sans-serif" font-size="8" fill="white" text-anchor="middle">Enabled</text>
+      </g>
+
+      <!-- API Keys Section -->
+      <text x="0" y="450" font-family="Inter, sans-serif" font-size="16" fill="white" text-anchor="start" font-weight="600">API Keys</text>
+      
+      <rect x="0" y="470" width="600" height="1" fill="#334155" />
+      
+      <rect x="0" y="480" width="600" height="40" fill="#1E293B" rx="6" />
+      <text x="10" y="505" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">E2B API Key</text>
+      <text x="550" y="505" font-family="Inter, sans-serif" font-size="12" fill="#10B981" text-anchor="end">Configured</text>
+      
+      <rect x="0" y="530" width="600" height="40" fill="#1E293B" rx="6" />
+      <text x="10" y="555" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">GROQ API Key</text>
+      <text x="550" y="555" font-family="Inter, sans-serif" font-size="12" fill="#10B981" text-anchor="end">Configured</text>
+      
+      <rect x="0" y="580" width="600" height="40" fill="#1E293B" rx="6" />
+      <text x="10" y="605" font-family="Inter, sans-serif" font-size="12" fill="white" text-anchor="start">NVIDIA NIM API Key</text>
+      <text x="550" y="605" font-family="Inter, sans-serif" font-size="12" fill="#10B981" text-anchor="end">Configured</text>
+    </g>
+
+    <!-- Save Button -->
+    <rect x="1000" y="700" width="100" height="40" fill="#10B981" rx="8" />
+    <text x="1050" y="725" font-family="Inter, sans-serif" font-size="14" fill="white" text-anchor="middle" font-weight="600">Save</text>
+  </g>
+
+  <!-- Window Frame -->
+  <rect x="0" y="0" width="1200" height="800" fill="none" stroke="#334155" stroke-width="1" rx="12" />
+  
+  <!-- Window Controls -->
+  <circle cx="30" cy="30" r="8" fill="#EF4444" />
+  <circle cx="50" cy="30" r="8" fill="#F59E0B" />
+  <circle cx="70" cy="30" r="8" fill="#10B981" />
+
+  <!-- Title -->
+  <text x="600" y="50" font-family="Inter, sans-serif" font-size="20" fill="white" text-anchor="middle" font-weight="600">NexusMind AI - Settings</text>
+</svg>

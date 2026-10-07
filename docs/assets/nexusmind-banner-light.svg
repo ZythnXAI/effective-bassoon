@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400">
+  <defs>
+    <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#8B5CF6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EC4899;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="gradient2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#8B5CF6;stop-opacity:0.8" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(0,0,0,0.1)" stroke-width="1" />
+    </pattern>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="400" fill="white" />
+  
+  <!-- Gradient wave background -->
+  <path d="M0,200 Q300,100 600,200 T1200,200 L1200,400 L0,400 Z" fill="url(#gradient1)" opacity="0.1" />
+  
+  <!-- Neural network background -->
+  <g fill="none" stroke="rgba(0,0,0,0.1)" stroke-width="1">
+    <!-- Horizontal lines -->
+    <line x1="0" y1="100" x2="1200" y2="100" />
+    <line x1="0" y1="200" x2="1200" y2="200" />
+    <line x1="0" y1="300" x2="1200" y2="300" />
+    
+    <!-- Nodes -->
+    <circle cx="100" cy="100" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="200" cy="100" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="300" cy="100" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="400" cy="100" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="500" cy="100" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="600" cy="100" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="700" cy="100" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="800" cy="100" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="900" cy="100" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="1000" cy="100" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="1100" cy="100" r="4" fill="#8B5CF6" opacity="0.4" />
+    
+    <circle cx="100" cy="200" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="200" cy="200" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="300" cy="200" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="400" cy="200" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="500" cy="200" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="600" cy="200" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="700" cy="200" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="800" cy="200" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="900" cy="200" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="1000" cy="200" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="1100" cy="200" r="4" fill="#3B82F6" opacity="0.4" />
+    
+    <circle cx="100" cy="300" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="200" cy="300" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="300" cy="300" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="400" cy="300" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="500" cy="300" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="600" cy="300" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="700" cy="300" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="800" cy="300" r="4" fill="#EC4899" opacity="0.4" />
+    <circle cx="900" cy="300" r="4" fill="#3B82F6" opacity="0.4" />
+    <circle cx="1000" cy="300" r="4" fill="#8B5CF6" opacity="0.4" />
+    <circle cx="1100" cy="300" r="4" fill="#EC4899" opacity="0.4" />
+  </g>
+  
+  <!-- Logo and Title -->
+  <g transform="translate(100, 100)">
+    <!-- Hexagon -->
+    <polygon 
+      points="0,0 100,25 100,75 0,100 -50,75 -50,25" 
+      fill="url(#gradient1)" 
+      stroke="#3B82F6" 
+      stroke-width="2" 
+      filter="url(#glow)"
+    />
+    
+    <!-- Neural network inside hexagon -->
+    <g fill="none" stroke="white" stroke-width="1.5">
+      <circle cx="25" cy="50" r="15" />
+      <circle cx="75" cy="50" r="15" />
+      <circle cx="50" cy="25" r="15" />
+      <circle cx="50" cy="75" r="15" />
+      <line x1="25" y1="50" x2="50" y2="25" />
+      <line x1="75" y1="50" x2="50" y2="25" />
+      <line x1="25" y1="50" x2="50" y2="75" />
+      <line x1="75" y1="50" x2="50" y2="75" />
+      <line x1="50" y1="25" x2="50" y2="75" />
+      <circle cx="25" cy="50" r="3" fill="white" />
+      <circle cx="75" cy="50" r="3" fill="white" />
+      <circle cx="50" cy="25" r="3" fill="white" />
+      <circle cx="50" cy="75" r="3" fill="white" />
+    </g>
+    
+    <!-- Sparkle icons -->
+    <g fill="white">
+      <path d="M-20,30 L-15,40 L-10,30 L-15,20 Z" />
+      <path d="M80,30 L85,40 L90,30 L85,20 Z" />
+      <path d="M25,-10 L30,0 L25,10 L20,0 Z" />
+      <path d="M75,-10 L80,0 L75,10 L70,0 Z" />
+    </g>
+  </g>
+  
+  <!-- Text -->
+  <g transform="translate(200, 100)">
+    <text x="0" y="55" font-family="Inter, sans-serif" font-size="48" font-weight="700" fill="#1F2937">
+      NEXUSMIND
+    </text>
+    <text x="0" y="110" font-family="Inter, sans-serif" font-size="24" font-weight="400" fill="#6B7280">
+      AI Platform
+    </text>
+  </g>
+  
+  <!-- Tagline -->
+  <text x="200" y="180" font-family="Inter, sans-serif" font-size="18" font-weight="400" fill="#4B5563">
+    Connecting Intelligence, Empowering Innovation
+  </text>
+  
+  <!-- Features -->
+  <g transform="translate(200, 250)">
+    <g transform="translate(0, 0)">
+      <circle cx="15" cy="15" r="8" fill="#3B82F6" />
+      <text x="40" y="20" font-family="Inter, sans-serif" font-size="16" font-weight="500" fill="#1F2937">
+        Multi-AI Integration
+      </text>
+    </g>
+    
+    <g transform="translate(0, 40)">
+      <circle cx="15" cy="15" r="8" fill="#8B5CF6" />
+      <text x="40" y="20" font-family="Inter, sans-serif" font-size="16" font-weight="500" fill="#1F2937">
+        Real-Time Streaming
+      </text>
+    </g>
+    
+    <g transform="translate(0, 80)">
+      <circle cx="15" cy="15" r="8" fill="#EC4899" />
+      <text x="40" y="20" font-family="Inter, sans-serif" font-size="16" font-weight="500" fill="#1F2937">
+        8+ AI Providers
+      </text>
+    </g>
+  </g>
+  
+  <!-- Right side - Screenshot mockup -->
+  <g transform="translate(700, 50)">
+    <rect x="0" y="0" width="450" height="300" rx="12" ry="12" fill="#F9FAFB" stroke="#E5E7EB" stroke-width="2" />
+    
+    <!-- Mock browser window -->
+    <rect x="10" y="10" width="430" height="30" rx="6" ry="6" fill="#F3F4F6" />
+    <circle cx="25" cy="25" r="4" fill="#EF4444" />
+    <circle cx="35" cy="25" r="4" fill="#F59E0B" />
+    <circle cx="45" cy="25" r="4" fill="#10B981" />
+    
+    <!-- Mock chat interface -->
+    <rect x="20" y="50" width="410" height="200" rx="6" ry="6" fill="white" stroke="#E5E7EB" />
+    
+    <!-- Mock messages -->
+    <rect x="40" y="70" width="150" height="30" rx="12" ry="12" fill="#3B82F6" opacity="0.2" />
+    <rect x="250" y="110" width="150" height="30" rx="12" ry="12" fill="#F3F4F6" stroke="#E5E7EB" />
+    <rect x="40" y="150" width="150" height="30" rx="12" ry="12" fill="#3B82F6" opacity="0.2" />
+    
+    <!-- Mock input -->
+    <rect x="40" y="260" width="370" height="30" rx="12" ry="12" fill="white" stroke="#E5E7EB" />
+  </g>
+  
+  <!-- Bottom right - Social icons -->
+  <g transform="translate(1050, 320)">
+    <a href="https://github.com/ZythnXAI/effective-bassoon">
+      <circle cx="0" cy="0" r="15" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1" />
+      <path d="M-7,-7 L-7,-3 L-11,0 L-7,3 L-7,7 L-3,7 L-3,11 L3,11 L3,7 L7,7 L7,3 L3,0 L7,-3 L7,-7 L3,-7 L3,-11 L-3,-11 L-3,-7 Z" fill="#181717" transform="translate(-8, -8)" />
+    </a>
+    
+    <a href="https://discord.gg/nexusmind" transform="translate(30, 0)">
+      <circle cx="0" cy="0" r="15" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1" />
+      <path d="M-8,0 C-8,-4 0,-8 8,-8 C12,-8 16,-4 16,0 C16,4 12,8 8,8 C0,8 -8,4 -8,0 Z M0,0 C0,-3 2,-5 5,-5 C8,-5 10,-3 10,0 C10,3 8,5 5,5 C2,5 0,3 0,0 Z" fill="#5865F2" transform="translate(-8, -8)" />
+    </a>
+    
+    <a href="https://twitter.com/NexusMindAI" transform="translate(60, 0)">
+      <circle cx="0" cy="0" r="15" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1" />
+      <path d="M-8,-2 C-8,-6 -2,-8 2,-8 C6,-8 8,-6 8,-2 C8,2 6,6 2,6 C-2,6 -8,2 -8,-2 Z M0,0 L6,0 L8,-2 L8,2 L6,0 L0,6 L-6,0 L-8,2 L-8,-2 L-6,0 Z" fill="#1DA1F2" transform="translate(-8, -8)" />
+    </a>
+  </g>
+</svg>
