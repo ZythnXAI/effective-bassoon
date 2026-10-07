@@ -1,0 +1,331 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom CSS for NexusMind AI */
+
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Base Styles */
+@layer base {
+  html {
+    @apply antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ring;
+  }
+
+  /* Focus styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-primary/20 text-foreground;
+  }
+}
+
+/* Component Styles */
+@layer components {
+  /* Chat bubble */
+  .chat-bubble {
+    @apply px-4 py-3 rounded-lg max-w-[80%];
+  }
+
+  .chat-bubble-user {
+    @apply bg-primary text-primary-foreground ml-auto;
+  }
+
+  .chat-bubble-assistant {
+    @apply bg-muted text-foreground mr-auto;
+  }
+
+  /* Input area */
+  .input-area {
+    @apply w-full px-4 py-3 rounded-lg border border-input bg-background text-foreground;
+  }
+
+  .input-area:focus {
+    @apply outline-none border-ring;
+  }
+
+  /* Button variants */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-primary-foreground hover:bg-primary/90;
+  }
+
+  .btn-secondary {
+    @apply bg-secondary text-secondary-foreground hover:bg-secondary/90;
+  }
+
+  .btn-ghost {
+    @apply hover:bg-muted hover:text-foreground;
+  }
+
+  .btn-icon {
+    @apply p-2 rounded-lg hover:bg-muted;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    @apply w-64 h-full border-r border-border bg-background;
+  }
+
+  .sidebar-item {
+    @apply px-3 py-2 rounded-lg text-sm font-medium transition-colors;
+  }
+
+  .sidebar-item-hover {
+    @apply hover:bg-muted;
+  }
+
+  .sidebar-item-active {
+    @apply bg-muted text-foreground;
+  }
+
+  /* Conversation list */
+  .conversation-item {
+    @apply px-3 py-2 rounded-lg transition-colors cursor-pointer;
+  }
+
+  .conversation-item-hover {
+    @apply hover:bg-muted;
+  }
+
+  .conversation-item-active {
+    @apply bg-muted;
+  }
+
+  /* Markdown content */
+  .markdown-content {
+    @apply prose dark:prose-invert prose-sm max-w-none;
+  }
+
+  .markdown-content p {
+    @apply my-2;
+  }
+
+  .markdown-content pre {
+    @apply bg-muted p-4 rounded-lg my-2 overflow-x-auto;
+  }
+
+  .markdown-content code {
+    @apply bg-muted px-2 py-1 rounded;
+  }
+
+  .markdown-content pre code {
+    @apply bg-transparent p-0;
+  }
+
+  /* Loading animation */
+  .loading-dots {
+    @apply flex space-x-1;
+  }
+
+  .loading-dots span {
+    @apply w-2 h-2 rounded-full bg-muted-foreground animate-bounce;
+    animation-delay: 0.1s;
+  }
+
+  .loading-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .loading-dots span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  /* Model selector */
+  .model-selector {
+    @apply px-3 py-2 rounded-lg border border-input bg-background text-sm;
+  }
+
+  /* Theme toggle */
+  .theme-toggle {
+    @apply p-2 rounded-lg hover:bg-muted cursor-pointer;
+  }
+
+  /* Avatar */
+  .avatar {
+    @apply w-8 h-8 rounded-full bg-muted flex items-center justify-center;
+  }
+
+  /* Badge */
+  .badge {
+    @apply px-2 py-1 rounded-full text-xs font-medium;
+  }
+
+  .badge-primary {
+    @apply bg-primary/10 text-primary;
+  }
+
+  .badge-secondary {
+    @apply bg-secondary/10 text-secondary;
+  }
+}
+
+/* Utility Styles */
+@layer utilities {
+  /* Text utilities */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Gradient text */
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary;
+  }
+
+  /* Glass effect */
+  .glass {
+    @apply bg-background/80 backdrop-blur-sm;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Smooth scroll */
+  .scroll-smooth {
+    scroll-behavior: smooth;
+  }
+
+  /* Safe area padding for mobile */
+  .safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .safe-area-inset-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-slide-down {
+  animation: slideDown 0.3s ease-out;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Custom theme variables */
+:root {
+  --background: 15 23 42;
+  --foreground: 240 250 255;
+  --primary: 59 130 246;
+  --primary-foreground: 255 255 255;
+  --secondary: 139 92 246;
+  --secondary-foreground: 255 255 255;
+  --muted: 30 41 59;
+  --muted-foreground: 100 116 139;
+  --border: 30 41 59;
+  --input: 15 23 42;
+  --ring: 59 130 246;
+}
+
+.dark {
+  --background: 15 23 42;
+  --foreground: 240 250 255;
+  --primary: 59 130 246;
+  --primary-foreground: 255 255 255;
+  --secondary: 139 92 246;
+  --secondary-foreground: 255 255 255;
+  --muted: 30 41 59;
+  --muted-foreground: 100 116 139;
+  --border: 30 41 59;
+  --input: 15 23 42;
+  --ring: 59 130 246;
+}

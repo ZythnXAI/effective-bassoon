@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nexusmind-backend
+    ports:
+      - "${BACKEND_PORT}:8000"
+    environment:
+      - BACKEND_PORT=8000
+      - BACKEND_HOST=0.0.0.0
+      - SECRET_KEY=${SECRET_KEY}
+      - ALGORITHM=${ALGORITHM}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - DATABASE_URL=${DATABASE_URL}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS}
+      - RATE_LIMIT_PERIOD=${RATE_LIMIT_PERIOD}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - LOG_FORMAT=${LOG_FORMAT}
+      # AI API Keys
+      - E2B_API_KEY=${E2B_API_KEY}
+      - EXA_AI_API_KEY=${EXA_AI_API_KEY}
+      - MANUS_AI_API_KEY=${MANUS_AI_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - FAL_AI_API_KEY=${FAL_AI_API_KEY}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY}
+      - BROWSERBASE_API_KEY=${BROWSERBASE_API_KEY}
+      - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY}
+      # AI API Endpoints
+      - E2B_BASE_URL=${E2B_BASE_URL}
+      - EXA_AI_BASE_URL=${EXA_AI_BASE_URL}
+      - MANUS_AI_BASE_URL=${MANUS_AI_BASE_URL}
+      - GROQ_BASE_URL=${GROQ_BASE_URL}
+      - FAL_AI_BASE_URL=${FAL_AI_BASE_URL}
+      - DAYTONA_BASE_URL=${DAYTONA_BASE_URL}
+      - BROWSERBASE_BASE_URL=${BROWSERBASE_BASE_URL}
+      - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL}
+    volumes:
+      - ./backend:/app
+      - nexusmind-db:/app/nexusmind.db
+    restart: unless-stopped
+    networks:
+      - nexusmind-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL}
+        - VITE_APP_NAME=${VITE_APP_NAME}
+        - VITE_APP_VERSION=${VITE_APP_VERSION}
+    container_name: nexusmind-frontend
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - nexusmind-network
+
+volumes:
+  nexusmind-db:
+
+networks:
+  nexusmind-network:
+    driver: bridge

@@ -1,0 +1,7 @@
+export { SettingsPage } from './SettingsPage'
+export { ProfileSettings } from './ProfileSettings'
+export { AppearanceSettings } from './AppearanceSettings'
+export { NotificationSettings } from './NotificationSettings'
+export { LanguageSettings } from './LanguageSettings'
+export { PrivacySettings } from './PrivacySettings'
+export { AboutSettings } from './AboutSettings'
