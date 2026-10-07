@@ -1,240 +1,133 @@
-# RDP em runner Windows do GitHub Actions, acessado via Tailscale.
-# Secrets: TAILSCALE_AUTH_KEY (obrigatório) | RDP_PASSWORD (opcional)
-name: Leo
+name: RDP
 
 on:
   workflow_dispatch:
 
-permissions: {}
-
-defaults:
-  run:
-    shell: pwsh
-
 jobs:
   secure-rdp:
-    runs-on: windows-latest   # Windows Server 2025 (mais recente + CPUs modernas)
-    timeout-minutes: 360
-    env:
-      TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-      RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+    runs-on: windows-latest
+    timeout-minutes: 3600
 
     steps:
-      # ---------------------------------------------------------------
-      # 1) Instala apps em BACKGROUND (não bloqueia o RDP)
-      # ---------------------------------------------------------------
-      - name: Instalar aplicativos (winget + Microsoft Store)
-        continue-on-error: true
+      - name: Configure Core RDP Settings (60 FPS)
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          Write-Host '::group::Instalando aplicativos via winget'
+          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                             -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "SecurityLayer" -Value 0 -Force
 
-          # Garante que o winget está disponível
-          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-              Write-Warning 'winget nao encontrado. Instalando App Installer...'
-              try {
-                  $msix = Join-Path $env:TEMP 'winget.msixbundle'
-                  Invoke-WebRequest -Uri 'https://aka.ms/getwinget' -OutFile $msix -TimeoutSec 120
-                  Add-AppxPackage -Path $msix
-                  Start-Sleep -Seconds 5
-              } catch { Write-Warning "Falha ao instalar o winget: $_" }
-          }
+          # ===== FORCE 60 FPS =====
+          # DWMFRAMEINTERVAL: intervalo de frame do Desktop Window Manager em ms.
+          # 16 ms ~= 62.5 FPS (default é 33 ms = ~30 FPS)
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations' `
+                           -Name "DWMFRAMEINTERVAL" -Value 16 -PropertyType DWord -Force | Out-Null
 
-          # Lista de apps (ajuste conforme desejar)
-          $apps = @(
-              'Microsoft.WindowsTerminal','Microsoft.PowerShell','Microsoft.VisualStudioCode',
-              'Google.Chrome','Mozilla.Firefox','7zip.7zip','Notepad++.Notepad++',
-              'VideoLAN.VLC','Microsoft.Paint','Microsoft.WindowsCalculator',
-              'Microsoft.Teams','Zoom.Zoom'
-          )
-          $storeApps = @(
-              '9NKSQGP7F2NH'   # WhatsApp Desktop
-              # '9NCBCSZSJRSB' # Spotify
-              # '9WZDNCRFJ3TJ' # Netflix
-          )
+          # Habilita aceleração de hardware e codecs AVC/HEVC (melhora fluidez)
+          $tsPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          if (-not (Test-Path $tsPol)) { New-Item -Path $tsPol -Force | Out-Null }
 
-          $failed = @()
-          foreach ($id in $apps) {
-              Write-Host ">> winget: $id"
-              winget install --id $id --exact --silent `
-                  --accept-source-agreements --accept-package-agreements `
-                  --disable-interactivity
-              if ($LASTEXITCODE -ne 0) { $failed += $id }
-          }
-          foreach ($id in $storeApps) {
-              Write-Host ">> msstore: $id"
-              winget install --id $id --exact --source msstore --silent `
-                  --accept-source-agreements --accept-package-agreements `
-                  --disable-interactivity
-              if ($LASTEXITCODE -ne 0) { $failed += $id }
-          }
-          if ($failed.Count) { Write-Warning "Apps com falha: $($failed -join ', ')" }
-          else { Write-Host 'Todos os apps instalados com sucesso.' }
-          Write-Host '::endgroup::'
+          New-ItemProperty -Path $tsPol -Name "bEnumerateHWBeforeSW"        -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $tsPol -Name "AVC444ModePreferred"         -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $tsPol -Name "AVCHardwareEncodePreferred"  -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $tsPol -Name "EnableRemoteFXAdvancedRemoteApp" -Value 1 -PropertyType DWord -Force | Out-Null
 
-      # ---------------------------------------------------------------
-      # 2) RDP + Tailscale + Resolução 1920x1080
-      # ---------------------------------------------------------------
-      - name: RDP + Tailscale
+          # Desabilita throttling de frames e efeitos de banda
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                             -Name "VisualFXSetting" -Value 2 -Force -ErrorAction SilentlyContinue
+
+          # Mantém sessão ativa (evita throttling quando ociosidade aumenta)
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "KeepAliveInterval" -Value 1 -PropertyType DWord -Force | Out-Null
+
+          # Remove qualquer regra existente com o mesmo nome para evitar duplicação
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+
+          # Libera porta 3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389
+
+          # Reinicia o serviço para aplicar as mudanças
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User with Secure Password
         run: |
-          if (-not $env:TS_AUTHKEY) { throw 'Secret TAILSCALE_AUTH_KEY nao definido.' }
+          Add-Type -AssemblyName System.Security
+          $charSet = @{
+              Upper   = [char[]](65..90)
+              Lower   = [char[]](97..122)
+              Number  = [char[]](48..57)
+              Special = ([char[]](33..47) + [char[]](58..64) +
+                         [char[]](91..96) + [char[]](123..126))
+          }
+          $rawPassword = @()
+          $rawPassword += $charSet.Upper | Get-Random -Count 4
+          $rawPassword += $charSet.Lower | Get-Random -Count 4
+          $rawPassword += $charSet.Number | Get-Random -Count 4
+          $rawPassword += $charSet.Special | Get-Random -Count 4
+          $password = -join ($rawPassword | Sort-Object { Get-Random })
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
-          $ProgressPreference = 'SilentlyContinue'
-          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
 
-          function Set-Reg($Path, $Name, $Value, $Type = 'DWord') {
-              if (-not (Test-Path $Path)) { New-Item $Path -Force | Out-Null }
-              New-ItemProperty $Path -Name $Name -Value $Value -PropertyType $Type -Force | Out-Null
+          if (-not (Get-LocalUser -Name "RDP")) {
+              Write-Error "User creation failed"
+              exit 1
           }
 
-          # Tailscale: baixa e instala em segundo plano
-          $install = Start-Job -ScriptBlock {
-              $ProgressPreference = 'SilentlyContinue'
-              $msi = Join-Path $env:RUNNER_TEMP 'tailscale.msi'
-              $ok  = $false
-              foreach ($v in 'latest', '1.82.0') {
-                  try {
-                      Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-${v}-amd64.msi" -OutFile $msi -TimeoutSec 120
-                      $ok = $true; break
-                  } catch { Write-Warning "Download Tailscale ($v) falhou: $_" }
-              }
-              if (-not $ok) { throw 'Nao foi possivel baixar o Tailscale.' }
-              $p = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
-              if ($p.ExitCode -notin 0, 3010) { throw "msiexec codigo $($p.ExitCode)" }
-              Remove-Item $msi -Force -ErrorAction SilentlyContinue
-          }
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
 
-          Write-Host '::group::Configurando RDP + Resolucao'
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
 
-          # --- RDP core ---
-          $tsk = 'HKLM:\System\CurrentControlSet\Control\Terminal Server'
-          Set-Reg $tsk 'fDenyTSConnections' 0
-          Set-Reg "$tsk\WinStations\RDP-Tcp" 'UserAuthentication' 1
-          Set-Reg "$tsk\WinStations\RDP-Tcp" 'SecurityLayer' 2
-          Set-Reg "$tsk\WinStations" 'DWMFRAMEINTERVAL' 15
-          Set-Reg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Server\ServerManager' 'DoNotOpenAtLogon' 1
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
 
-          # --- Resolucao padrao 1920x1080 (registro GraphicsDrivers) ---
-          $gfxConfigs = Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers\Configuration' -ErrorAction SilentlyContinue
-          foreach ($cfg in $gfxConfigs) {
-              $sub = Join-Path $cfg.PSPath '00\00'
-              if (Test-Path $sub) {
-                  Set-Reg $sub 'DefaultSettings.XResolution' 1920
-                  Set-Reg $sub 'DefaultSettings.YResolution' 1080
-                  Set-Reg $sub 'DefaultSettings.RefreshRate' 60
-                  Write-Host "Resolucao fixada em 1920x1080 para $($cfg.PSChildName)"
-              }
-          }
-
-          # --- Politica de resolucao maxima via Terminal Services ---
-          $tsPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          if (-not (Test-Path $tsPolicy)) { New-Item $tsPolicy -Force | Out-Null }
-          Set-Reg $tsPolicy 'TS_MAXDISPLAYRES' 1
-          Set-Reg $tsPolicy 'MaxXResolution' 1920
-          Set-Reg $tsPolicy 'MaxYResolution' 1080
-          Write-Host 'Politica de resolucao maxima definida (1920x1080).'
-
-          # --- Firewall RDP apenas via Tailscale ---
-          foreach ($proto in 'TCP', 'UDP') {
-              New-NetFirewallRule -DisplayName "RDP-Tailscale-$proto" -Direction Inbound -Action Allow `
-                  -Protocol $proto -LocalPort 3389 -RemoteAddress '100.64.0.0/10', 'fd7a:115c:a1e0::/48' -Profile Any | Out-Null
-          }
-
-          # --- Efeitos visuais ligados no perfil padrao ---
-          try { Set-Service Themes -StartupType Automatic; Start-Service Themes } catch { }
-          $effects = @(
-              @('Control Panel\Desktop', 'UserPreferencesMask', 'REG_BINARY', '9E3E078012000000'),
-              @('Control Panel\Desktop', 'DragFullWindows', 'REG_SZ', '1'),
-              @('Control Panel\Desktop\WindowMetrics', 'MinAnimate', 'REG_SZ', '1'),
-              @('Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects', 'VisualFXSetting', 'REG_DWORD', '1'),
-              @('Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced', 'TaskbarAnimations', 'REG_DWORD', '1')
-          )
-          reg load HKU\TmpDefault "$env:SystemDrive\Users\Default\NTUSER.DAT" | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-              foreach ($e in $effects) {
-                  $key, $name, $type, $data = $e
-                  reg add "HKU\TmpDefault\$key" /v $name /t $type /d $data /f | Out-Null
-              }
-              foreach ($i in 1..10) {
-                  [gc]::Collect(); [gc]::WaitForPendingFinalizers()
-                  reg unload HKU\TmpDefault 2>$null | Out-Null
-                  if ($LASTEXITCODE -eq 0) { break }
-                  Start-Sleep -Milliseconds 500
-              }
-          } else { Write-Warning 'Perfil padrao indisponivel.' }
-
-          # --- Usuario RDP ---
-          if ($env:RDP_PASSWORD) {
-              $password = $env:RDP_PASSWORD
-              $shown    = '(a que voce definiu no secret RDP_PASSWORD)'
-          } else {
-              $sets  = 'ABCDEFGHJKLMNPQRSTUVWXYZ','abcdefghijkmnopqrstuvwxyz','23456789','!@#$%&*?-_=+'
-              $all   = $sets -join ''
-              $rand  = { param([string]$s) $s[[Security.Cryptography.RandomNumberGenerator]::GetInt32($s.Length)] }
-              $chars = @($sets | ForEach-Object { & $rand $_ }) + @(1..16 | ForEach-Object { & $rand $all })
-              $password = -join ($chars | Sort-Object { [Security.Cryptography.RandomNumberGenerator]::GetInt32([int]::MaxValue) })
-              $shown    = $password
-          }
-          New-LocalUser -Name 'RDP' -Password (ConvertTo-SecureString $password -AsPlainText -Force) -AccountNeverExpires -PasswordNeverExpires | Out-Null
-          Add-LocalGroupMember -Group 'Administrators' -Member 'RDP'
-          Add-LocalGroupMember -Group 'Remote Desktop Users' -Member 'RDP'
-
-          Restart-Service TermService -Force
-          Write-Host '::endgroup::'
-
-          # --- Tailscale up ---
-          Receive-Job $install -Wait -AutoRemoveJob | Out-Null
-          if (-not (Test-Path $ts)) { throw 'Tailscale nao foi instalado.' }
-          try { (Get-Service Tailscale).WaitForStatus('Running', [TimeSpan]::FromSeconds(30)) } catch { Write-Warning $_ }
-
-          $tsArgs = @('up', "--authkey=$env:TS_AUTHKEY", "--hostname=gh-runner-$env:GITHUB_RUN_ID",
-                      '--unattended', '--accept-dns=false', '--timeout=60s')
-          $connected = $false
-          foreach ($attempt in 1..3) {
-              & $ts @tsArgs
-              if ($LASTEXITCODE -eq 0) { $connected = $true; break }
-              Write-Warning "tailscale up falhou (tentativa $attempt/3)"
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
-          }
-          if (-not $connected) { throw 'Falha ao conectar no Tailscale.' }
-
-          $ip = $null
-          foreach ($i in 1..20) {
-              $ip = & $ts ip -4 2>$null | Select-Object -First 1
-              if ($ip) { break }
-              Start-Sleep -Seconds 1
-          }
-          if (-not $ip) { throw 'Tailscale nao atribuiu IP.' }
-
-          # --- Verifica RDP ---
-          $listening = $false
-          foreach ($i in 1..15) {
-              $c = [Net.Sockets.TcpClient]::new()
-              try { $listening = $c.ConnectAsync($ip, 3389).Wait(1000) -and $c.Connected } catch { } finally { $c.Dispose() }
-              if ($listening) { break }
-              Start-Sleep -Seconds 1
-          }
-          if (-not $listening) { throw "Porta 3389 nao respondeu em $ip." }
-
-          Write-Host ''
-          Write-Host '=============== ACESSO RDP ==============='
-          Write-Host "Endereco : $ip"
-          Write-Host 'Usuario  : RDP'
-          Write-Host "Senha    : $shown"
-          Write-Host 'Resolucao: 1920x1080 (padrao)'
-          Write-Host '=========================================='
-          Write-Host 'Dica: no mstsc > Experiencia, escolha "LAN" e marque todas as opcoes.'
-          Write-Host ''
-
-          # Mantém o runner ativo
-          while ($true) {
-              Start-Sleep -Seconds 900
-              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP ativo em $ip"
+              $retries++
           }
 
-      - name: Remover nó do Tailscale
-        if: always()
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP Accessibility
         run: |
-          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          if (Test-Path $ts) { & $ts logout }
-          exit 0
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: RDP"
+          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "Frame rate target: 60 FPS (DWMFRAMEINTERVAL=16)"
+          Write-Host "==================`n"
+
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
