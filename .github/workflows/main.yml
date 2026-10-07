@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      - name: Configure Core RDP Settings (60 FPS)
+      - name: Configure Core RDP Settings
         run: |
           # Enable Remote Desktop and disable Network Level Authentication (if needed)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
@@ -19,48 +19,25 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
                              -Name "SecurityLayer" -Value 0 -Force
 
-          # ===== FORCE 60 FPS =====
-          # DWMFRAMEINTERVAL: intervalo de frame do Desktop Window Manager em ms.
-          # 16 ms ~= 62.5 FPS (default é 33 ms = ~30 FPS)
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations' `
-                           -Name "DWMFRAMEINTERVAL" -Value 16 -PropertyType DWord -Force | Out-Null
-
-          # Habilita aceleração de hardware e codecs AVC/HEVC (melhora fluidez)
-          $tsPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          if (-not (Test-Path $tsPol)) { New-Item -Path $tsPol -Force | Out-Null }
-
-          New-ItemProperty -Path $tsPol -Name "bEnumerateHWBeforeSW"        -Value 1 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path $tsPol -Name "AVC444ModePreferred"         -Value 1 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path $tsPol -Name "AVCHardwareEncodePreferred"  -Value 1 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path $tsPol -Name "EnableRemoteFXAdvancedRemoteApp" -Value 1 -PropertyType DWord -Force | Out-Null
-
-          # Desabilita throttling de frames e efeitos de banda
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "VisualFXSetting" -Value 2 -Force -ErrorAction SilentlyContinue
-
-          # Mantém sessão ativa (evita throttling quando ociosidade aumenta)
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                           -Name "KeepAliveInterval" -Value 1 -PropertyType DWord -Force | Out-Null
-
-          # Remove qualquer regra existente com o mesmo nome para evitar duplicação
+          # Remove any existing rule with the same name to avoid duplication
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-
-          # Libera porta 3389
+          
+          # For testing, allow any incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
-          # Reinicia o serviço para aplicar as mudanças
+          # (Optional) Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Secure Password
         run: |
           Add-Type -AssemblyName System.Security
           $charSet = @{
-              Upper   = [char[]](65..90)
-              Lower   = [char[]](97..122)
-              Number  = [char[]](48..57)
+              Upper   = [char[]](65..90)      # A-Z
+              Lower   = [char[]](97..122)     # a-z
+              Number  = [char[]](48..57)      # 0-9
               Special = ([char[]](33..47) + [char[]](58..64) +
-                         [char[]](91..96) + [char[]](123..126))
+                         [char[]](91..96) + [char[]](123..126)) # Special characters
           }
           $rawPassword = @()
           $rawPassword += $charSet.Upper | Get-Random -Count 4
@@ -72,9 +49,9 @@ jobs:
           New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-
+          
           echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
-
+          
           if (-not (Get-LocalUser -Name "RDP")) {
               Write-Error "User creation failed"
               exit 1
@@ -84,15 +61,17 @@ jobs:
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-
+          
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
 
       - name: Establish Tailscale Connection
         run: |
+          # Bring up Tailscale with the provided auth key and set a unique hostname
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-
+          
+          # Wait for Tailscale to assign an IP
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -100,17 +79,18 @@ jobs:
               Start-Sleep -Seconds 5
               $retries++
           }
-
+          
           if (-not $tsIP) {
               Write-Error "Tailscale IP not assigned. Exiting."
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
+      
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-
+          
+          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
@@ -124,9 +104,9 @@ jobs:
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "Frame rate target: 60 FPS (DWMFRAMEINTERVAL=16)"
           Write-Host "==================`n"
-
+          
+          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
               Start-Sleep -Seconds 300
